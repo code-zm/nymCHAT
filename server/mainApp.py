@@ -1,4 +1,3 @@
-# mainApp.py
 import asyncio
 import json
 from websocketUtils import WebsocketUtils
@@ -14,6 +13,9 @@ async def main():
     database_manager = DbUtils(db_path)
     message_handler = MessageUtils(websocket_manager, database_manager)
 
+    # Set the callback for processing WebSocket messages
+    websocket_manager.set_message_callback(message_handler.processMessage)
+
     try:
         # Connect to WebSocket
         print("[INFO] Connecting to WebSocket...")
@@ -21,14 +23,10 @@ async def main():
 
         print("[INFO] Waiting for incoming messages...")
 
+        # Keep the event loop running
         while True:
-            # Receive a message from the WebSocket
-            received_message = await websocket_manager.receive()
+            await asyncio.sleep(1)  # Prevent busy-waiting
 
-            if received_message:
-                print(f"[RECEIVED] {json.dumps(received_message, indent=2)}")
-                # Process the message
-                await message_handler.process_message(received_message)
     except asyncio.CancelledError:
         print("[INFO] Main coroutine was cancelled.")
         # Perform any additional cleanup if necessary
@@ -50,5 +48,3 @@ if __name__ == "__main__":
         print("[INFO] Application interrupted by user.")
     except asyncio.CancelledError:
         print("[INFO] Application shutdown gracefully.")
-
-
