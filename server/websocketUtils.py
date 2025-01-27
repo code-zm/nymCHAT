@@ -29,6 +29,7 @@ class WebsocketUtils:
         try:
             while True:
                 raw_message = await self.websocket.recv()
+                print(raw_message)
                 message_data = json.loads(raw_message)
 
                 # Call the callback for further processing

@@ -1,22 +1,34 @@
-# messageHandler.py
 import json
+import secrets
+import os
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.serialization import load_pem_public_key
-from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
+from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature, decode_dss_signature
+from cryptographyUtils import CryptoUtils
 
 class MessageUtils:
-    def __init__(self, websocketManager, databaseManager):
+    NONCES = {}  # Temporary storage for nonces
+    PENDING_USERS = {}  # Temporary storage for user details during registration
+
+    def __init__(self, websocketManager, databaseManager, crypto_utils):
         self.websocketManager = websocketManager
         self.databaseManager = databaseManager
+        self.cryptoUtils = CryptoUtils()
 
-    def verifySignature(self, publicKeyPem, signature, message):
+        # Ensure the server's key pair exists
+        if not os.path.exists("keys/nymserver_private_key.pem"):
+            print("[INFO] Generating server key pair...")
+            self.cryptoUtils.generate_key_pair("nymserver")
+            print("[INFO] Server key pair generated.")
+
+    def verify_signature(self, publicKeyPem, signature, message):
         try:
-            publicKey = load_pem_public_key(publicKeyPem.encode())
-            publicKey.verify(signature, message.encode(), ec.ECDSA(hashes.SHA256()))
+            publicKey = load_pem_private_key(publicKeyPem.encode(), None)
+            publicKey.verify(
+                signature, message.encode(), ec.ECDSA(hashes.SHA256())
+            )
             return True
-        except InvalidSignature:
-            return False
         except Exception as e:
             print(f"Error verifying signature: {e}")
             return False
@@ -41,6 +53,8 @@ class MessageUtils:
                 await self.handleQuery(encapsulatedData, senderTag)
             elif action == "register":
                 await self.handleRegister(encapsulatedData, senderTag)
+            elif action == "registrationResponse":
+                await self.handleRegistrationResponse(encapsulatedData, senderTag)
             elif action == "update":
                 await self.handleUpdate(encapsulatedData, senderTag)
             elif action == "send":
@@ -51,124 +65,130 @@ class MessageUtils:
                 await self.handleCreateGroup(encapsulatedData, senderTag)
             elif action == "inviteGroup":
                 await self.handleSendInvite(encapsulatedData, senderTag)
+            elif action == "loginResponse":
+                await self.handleLoginResponse(encapsulatedData, senderTag)
             else:
                 print(f"Unknown encapsulated action: {action}")
         except json.JSONDecodeError:
             print("Error decoding encapsulated message")
 
     async def handleRegister(self, messageData, senderTag):
-        username = messageData.get("username")
+        username = messageData.get("usernym")
         publicKey = messageData.get("publicKey")
 
         if not username or not publicKey:
-            await self.sendConfirmation(senderTag, "error: missing username or public key")
+            await self.sendEncapsulatedReply(senderTag, "error: missing username or public key", action="challengeResponse", context="registration")
             return
 
         if self.databaseManager.getUserByUsername(username):
-            await self.sendConfirmation(senderTag, "error: username already in use")
+            await self.sendEncapsulatedReply(senderTag, "error: username already in use", action="challengeResponse", context="registration")
             return
 
-        if self.databaseManager.getUserBySenderTag(senderTag):
-            await self.sendConfirmation(senderTag, "error: senderTag already in use")
-            return
+        # Generate a nonce and store it in PENDING_USERS
+        nonce = secrets.token_hex(16)
+        self.PENDING_USERS[senderTag] = (username, publicKey, nonce)
 
-        if self.databaseManager.addUser(username, publicKey, senderTag):
-            print(f"User {username} successfully registered with senderTag {senderTag}.")
-            await self.sendConfirmation(senderTag, "success")
-        else:
-            await self.sendConfirmation(senderTag, "error: registration failed")
+        # Send the challenge to the client
+        await self.sendEncapsulatedReply(senderTag, json.dumps({"nonce": nonce}), action="challenge", context="registration")
 
-    async def handleQuery(self, messageData, senderTag):
-        username = messageData.get("target")
-        user = self.databaseManager.getUserByUsername(username)
-
-        if user:
-            await self.sendConfirmation(user[2], "confirm")  # User's senderTag is in the 3rd column
-        else:
-            await self.sendConfirmation(senderTag, "deny")
-
-    async def handleSend(self, messageData, senderTag):
-        recipient = messageData.get("target")
-        content = messageData.get("content")
-        user = self.databaseManager.getUserByUsername(recipient)
-
-        if user:
-            message = {
-                "type": "reply",
-                "message": content,
-                "senderTag": user[2],  # User's senderTag is in the 3rd column
-            }
-            await self.websocketManager.send(message)
-
-    async def handleSendGroup(self, messageData, senderTag):
-        groupId = messageData.get("target")
-        content = messageData.get("content")
-        group = self.databaseManager.getGroup(groupId)
-
-        if group:
-            userList = json.loads(group[1])  # User list is in the 2nd column
-            for username in userList:
-                user = self.databaseManager.getUserByUsername(username)
-                if user:
-                    message = {
-                        "type": "message",
-                        "recipient": user[2],
-                        "message": content,
-                    }
-                    await self.websocketManager.send(message)
-
-    async def handleUpdate(self, messageData, senderTag):
-        field = messageData.get("field")
-        value = messageData.get("value")
+    async def handleRegistrationResponse(self, messageData, senderTag):
         signature = messageData.get("signature")
-        username = messageData.get("target")
+        user_details = self.PENDING_USERS.get(senderTag)
+
+        if not user_details:
+            await self.sendEncapsulatedReply(senderTag, "error: no pending registration for sender", action="challengeResponse", context="registration")
+            return
+
+        username, publicKey, nonce = user_details
+
+        # Verify the signature
+        if self.cryptoUtils.verify_signature(publicKey, nonce, signature):
+            if self.databaseManager.addUser(username, publicKey, senderTag):
+                await self.sendEncapsulatedReply(senderTag, "success", action="challengeResponse", context="registration")
+                del self.PENDING_USERS[senderTag]  # Clean up after successful registration
+            else:
+                await self.sendEncapsulatedReply(senderTag, "error: database failure", action="challengeResponse", context="registration")
+        else:
+            await self.sendEncapsulatedReply(senderTag, "error: signature verification failed", action="challengeResponse", context="registration")
+            del self.PENDING_USERS[senderTag]  # Clean up after failed verification
+
+    async def handleLogin(self, messageData, senderTag):
+        """
+        Handle the login request from the client.
+        """
+        username = messageData.get("username")
+
+        if not username:
+            await self.sendEncapsulatedReply(senderTag, "error: missing username", action="challengeResponse", context="login")
+            return
 
         user = self.databaseManager.getUserByUsername(username)
         if not user:
-            await self.sendConfirmation(senderTag, "deny")
+            await self.sendEncapsulatedReply(senderTag, "error: user not found", action="challengeResponse", context="login")
             return
 
-        publicKeyPem = user[1]  # Public key is in the 2nd column
-        if not self.verifySignature(publicKeyPem, bytes.fromhex(signature), json.dumps({field: value})):
-            await self.sendConfirmation(senderTag, "deny")
+        # Generate a nonce and store it
+        nonce = secrets.token_hex(16)
+        self.NONCES[senderTag] = (username, user[1], nonce)  # user[1] is the public key
+
+        # Send the challenge to the client
+        await self.sendEncapsulatedReply(senderTag, json.dumps({"nonce": nonce}), action="challenge", context="login")
+
+
+    async def handleLoginResponse(self, messageData, senderTag):
+        """
+        Handle the login response from the client.
+        """
+        signature = messageData.get("signature")
+        user_details = self.NONCES.get(senderTag)
+
+        if not user_details:
+            await self.sendEncapsulatedReply(senderTag, "error: no pending login for sender", action="challengeResponse", context="login")
             return
 
-        if self.databaseManager.updateUserField(username, field, value):
-            await self.sendConfirmation(senderTag, "confirm")
+        username, publicKey, nonce = user_details
+
+        # Verify the signature
+        if self.cryptoUtils.verify_signature(publicKey, nonce, signature):
+            await self.sendEncapsulatedReply(senderTag, "success", action="challengeResponse", context="login")
+            del self.NONCES[senderTag]  # Clean up after successful login
         else:
-            await self.sendConfirmation(senderTag, "deny")
+            await self.sendEncapsulatedReply(senderTag, "error: invalid signature", action="challengeResponse", context="login")
+            del self.NONCES[senderTag]
 
-    async def handleCreateGroup(self, messageData, senderTag):
-        groupId = messageData.get("groupID")
-        initialUser = [senderTag]
 
-        if self.databaseManager.addGroup(groupId, initialUser):
-            await self.sendConfirmation(senderTag, "confirm")
+    async def sendEncapsulatedReply(self, recipientTag, content, action="challengeResponse", context=None):
+        """
+        Send an encapsulated reply message.
+        :param recipientTag: The recipient's sender tag.
+        :param content: The content to send back.
+        :param action: The action type of the reply (default is "challengeResponse").
+        :param context: Additional context for the reply (e.g., 'registration').
+        """
+        # Load the server's private key
+        private_key = self.cryptoUtils.load_private_key("nymserver")
+        if private_key is None:
+            print("[ERROR] Server private key not found.")
+            return
+        
+        if isinstance(content, str):  # If content is already a JSON string
+            payload = content
         else:
-            await self.sendConfirmation(senderTag, "deny")
+            payload = json.dumps(content)  # Serialize the content
 
-    async def handleSendInvite(self, messageData, senderTag):
-        recipient = messageData.get("target")
-        groupId = messageData.get("groupID")
-        groupName = messageData.get("groupName")
-        user = self.databaseManager.getUserByUsername(recipient)
+        signature = private_key.sign(
+            content.encode(),
+            ec.ECDSA(hashes.SHA256())
+        )
 
-        if user:
-            inviteMessage = {
-                "type": "invite",
-                "recipient": user[2],
-                "message": {
-                    "groupID": groupId,
-                    "groupName": groupName,
-                },
-            }
-            await self.websocketManager.send(inviteMessage)
-
-    async def sendConfirmation(self, recipientTag, status):
-        confirmMessage = {
+        replyMessage = {
             "type": "reply",
-            "message": f"{status}",
-            "senderTag": recipientTag,
+            "message": json.dumps({
+                "action": action,
+                "content": content,
+                "context": context,
+                "signature": signature.hex()
+            }),
+            "senderTag": recipientTag
         }
-        await self.websocketManager.send(confirmMessage)
-
+        await self.websocketManager.send(replyMessage)

@@ -3,15 +3,18 @@ import json
 from websocketUtils import WebsocketUtils
 from dbUtils import DbUtils
 from messageUtils import MessageUtils
+from cryptographyUtils import CryptoUtils
 
 async def main():
     # Initialize components
     websocket_url = "ws://127.0.0.1:1977"
     db_path = "nym_server.db"
+    key_dir = "keys"  # Directory for storing cryptographic keys
 
     websocket_manager = WebsocketUtils(websocket_url)
     database_manager = DbUtils(db_path)
-    message_handler = MessageUtils(websocket_manager, database_manager)
+    cryptography_utils = CryptoUtils(key_dir)  # Initialize CryptoUtils
+    message_handler = MessageUtils(websocket_manager, database_manager, cryptography_utils)  # Message handler uses CryptoUtils internally
 
     # Set the callback for processing WebSocket messages
     websocket_manager.set_message_callback(message_handler.processMessage)
