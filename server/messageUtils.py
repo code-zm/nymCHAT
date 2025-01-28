@@ -53,6 +53,8 @@ class MessageUtils:
                 await self.handleQuery(encapsulatedData, senderTag)
             elif action == "register":
                 await self.handleRegister(encapsulatedData, senderTag)
+            elif action == "login":
+                await self.handleLogin(encapsulatedData, senderTag)
             elif action == "registrationResponse":
                 await self.handleRegistrationResponse(encapsulatedData, senderTag)
             elif action == "update":
@@ -116,7 +118,7 @@ class MessageUtils:
         """
         Handle the login request from the client.
         """
-        username = messageData.get("username")
+        username = messageData.get("usernym")
 
         if not username:
             await self.sendEncapsulatedReply(senderTag, "error: missing username", action="challengeResponse", context="login")
