@@ -18,13 +18,18 @@ class DbUtils:
 
     def _initializeTables(self):
         print("[INFO] Ensuring necessary database tables exist...")
+
+        # Create or ensure the 'users' table has all the needed columns
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
             publicKey TEXT NOT NULL,
-            senderTag TEXT NOT NULL
+            senderTag TEXT NOT NULL,
+            firstName TEXT,        -- Optional field
+            lastName TEXT          -- Optional field
         )
         """)
+
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS groups (
             groupID TEXT PRIMARY KEY,
@@ -33,11 +38,14 @@ class DbUtils:
         """)
         self.connection.commit()
 
-    def addUser(self, username, publicKey, senderTag):
+    def addUser(self, username, publicKey, senderTag, firstName=None, lastName=None):
         try:
             self.cursor.execute(
-                "INSERT INTO users (username, publicKey, senderTag) VALUES (?, ?, ?)",
-                (username, publicKey, senderTag),
+                """
+                INSERT INTO users (username, publicKey, senderTag, firstName, lastName)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (username, publicKey, senderTag, firstName, lastName),
             )
             self.connection.commit()
         except sqlite3.IntegrityError as e:
