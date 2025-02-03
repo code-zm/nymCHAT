@@ -74,6 +74,146 @@ class MessageUtils:
         except json.JSONDecodeError:
             print("Error decoding encapsulated message")
 
+
+    async def handleSend(self, messageData, senderTag):
+        """
+        Handle a direct 'send' message request from a client.
+        Expected messageData format:
+          {
+            "action": "send",
+            "target": "<recipient_username>",
+            "content": "<message_body>",
+            "signature": "<hex_signature>"
+          }
+        """
+
+        target = messageData.get("target")
+        content = messageData.get("content")
+        signature = messageData.get("signature")
+
+        # Basic validation
+        if not target or not content or not signature:
+            await self.sendEncapsulatedReply(
+                senderTag,
+                "error: missing fields (target, content, or signature)",
+                action="sendResponse",
+                context="chat"
+            )
+            return
+
+        # Look up the sender in the DB by senderTag
+        senderUser = self.databaseManager.getUserBySenderTag(senderTag)
+        if not senderUser:
+            await self.sendEncapsulatedReply(
+                senderTag,
+                "error: unregistered sender",
+                action="sendResponse",
+                context="chat"
+            )
+            return
+
+        # senderUser is likely a tuple: (username, publicKey, senderTag, firstName, lastName)
+        # depending on how your schema is laid out
+        senderUsername, senderPublicKey = senderUser[0], senderUser[1]
+
+        # Verify the signature using the sender's public key
+        if not self.cryptoUtils.verify_signature(senderPublicKey, content, signature):
+            await self.sendEncapsulatedReply(
+                senderTag,
+                "error: invalid signature",
+                action="sendResponse",
+                context="chat"
+            )
+            return
+
+        # Find the target user by username
+        targetUser = self.databaseManager.getUserByUsername(target)
+        if not targetUser:
+            await self.sendEncapsulatedReply(
+                senderTag,
+                "error: target user not found",
+                action="sendResponse",
+                context="chat"
+            )
+            return
+
+        targetSenderTag = targetUser[2]  # e.g. (username, publicKey, senderTag, ...)
+
+        # Build the message we'll forward to the target user
+        # They may want to see the sender's username + the original content
+        forwardPayload = {
+            "action": "incomingMessage",
+            "from": senderUsername,
+            "content": content,
+            "signature": signature
+        }
+
+        # Send the forwarded message to the target user
+        await self.sendEncapsulatedReply(
+            targetSenderTag,
+            json.dumps(forwardPayload),
+            action="incomingMessage",
+            context="chat"
+        )
+
+        # Optionally, inform the original sender that the message was forwarded successfully
+        await self.sendEncapsulatedReply(
+            senderTag,
+            "success",
+            action="sendResponse",
+            context="chat"
+        )
+
+
+    async def handleQuery(self, messageData, senderTag):
+        """
+        Handle a user discovery query:
+          - The client sends a 'username' field to look up.
+          - We return either the user details or a 'No user found' message.
+        """
+        target_username = messageData.get("username")
+        if not target_username:
+            # If 'username' is missing, let the client know
+            await self.sendEncapsulatedReply(
+                senderTag,
+                "error: missing 'username' field",
+                action="queryResponse",
+                context="query"
+            )
+            return
+
+        # Look up the user record in the DB
+        user = self.databaseManager.getUserByUsername(target_username)
+        if user:
+            # Suppose the schema is:
+            # (username, publicKey, senderTag, firstName, lastName)
+            username, publicKey, _, firstName, lastName = user
+            
+            user_data = {
+                "username": username,
+                "publicKey": publicKey,
+                "firstName": firstName if firstName else "",
+                "lastName": lastName if lastName else ""
+            }
+            
+            # Send back the user info (no senderTag)
+            await self.sendEncapsulatedReply(
+                senderTag,
+                json.dumps(user_data),
+                action="queryResponse",
+                context="query"
+            )
+        else:
+            # No user found
+            await self.sendEncapsulatedReply(
+                senderTag,
+                "No user found",
+                action="queryResponse",
+                context="query"
+            )
+
+
+
     async def handleRegister(self, messageData, senderTag):
         username = messageData.get("usernym")
         publicKey = messageData.get("publicKey")
@@ -157,6 +297,8 @@ class MessageUtils:
         else:
             await self.sendEncapsulatedReply(senderTag, "error: invalid signature", action="challengeResponse", context="login")
             del self.NONCES[senderTag]
+
+
 
 
     async def sendEncapsulatedReply(self, recipientTag, content, action="challengeResponse", context=None):
