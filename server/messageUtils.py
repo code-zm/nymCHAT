@@ -78,46 +78,90 @@ class MessageUtils:
     async def handleSend(self, messageData, senderTag):
         """
         Handle a direct 'send' message request from a client.
-        Expected messageData format:
-          {
-            "action": "send",
-            "target": "<recipient_username>",
-            "content": "<message_body>",
-            "signature": "<hex_signature>"
-          }
+        
+        The incoming messageData should look like:
+            {
+              "action": "send",
+              "content": "{\"sender\": \"prod\", \"recipient\": \"Nym2025\", \"body\": \"hello\"}",
+              "signature": "<hex_signature>"
+            }
+        
+        1. Parse the raw 'content' string to get 'sender', 'recipient', 'body'.
+        2. Verify the signature using the sender's public key.
+        3. Forward a minimal JSON structure to the recipient:
+           {
+             "action": "incomingMessage",
+             "from":   "<sender_username>",
+             "content": "<actual_message_body>"
+           }
         """
 
-        target = messageData.get("target")
-        content = messageData.get("content")
+        content_str = messageData.get("content")
         signature = messageData.get("signature")
 
         # Basic validation
-        if not target or not content or not signature:
+        if not content_str or not signature:
             await self.sendEncapsulatedReply(
                 senderTag,
-                "error: missing fields (target, content, or signature)",
+                "error: missing 'content' or 'signature'",
                 action="sendResponse",
                 context="chat"
             )
             return
 
-        # Look up the sender in the DB by senderTag
-        senderUser = self.databaseManager.getUserBySenderTag(senderTag)
-        if not senderUser:
+        # Parse the inner JSON for actual message details
+        try:
+            content_dict = json.loads(content_str)
+        except json.JSONDecodeError:
             await self.sendEncapsulatedReply(
                 senderTag,
-                "error: unregistered sender",
+                "error: invalid JSON in content",
                 action="sendResponse",
                 context="chat"
             )
             return
 
-        # senderUser is likely a tuple: (username, publicKey, senderTag, firstName, lastName)
-        # depending on how your schema is laid out
-        senderUsername, senderPublicKey = senderUser[0], senderUser[1]
+        # Extract the sender username and recipient username
+        sender_username = content_dict.get("sender")
+        recipient_username = content_dict.get("recipient")
+        message_body = content_dict.get("body")
 
-        # Verify the signature using the sender's public key
-        if not self.cryptoUtils.verify_signature(senderPublicKey, content, signature):
+        if not sender_username or not recipient_username:
+            await self.sendEncapsulatedReply(
+                senderTag,
+                "error: missing 'sender' or 'recipient' field in message content",
+                action="sendResponse",
+                context="chat"
+            )
+            return
+
+        # Look up the sender by username in the DB
+        senderRecord = self.databaseManager.getUserByUsername(sender_username)
+        if not senderRecord:
+            await self.sendEncapsulatedReply(
+                senderTag,
+                "error: unrecognized sender username",
+                action="sendResponse",
+                context="chat"
+            )
+            return
+
+        # senderRecord: (username, publicKey, dbSenderTag, ...)
+        dbSenderTag = senderRecord[2]
+        dbPublicKey = senderRecord[1]
+
+        # Ensure this inbound message actually came from the user who owns that senderTag
+        if dbSenderTag != senderTag:
+            await self.sendEncapsulatedReply(
+                senderTag,
+                "error: senderTag mismatch",
+                action="sendResponse",
+                context="chat"
+            )
+            return
+
+        # Verify the sender's signature over the raw content_str
+        if not self.cryptoUtils.verify_signature(dbPublicKey, content_str, signature):
             await self.sendEncapsulatedReply(
                 senderTag,
                 "error: invalid signature",
@@ -126,29 +170,27 @@ class MessageUtils:
             )
             return
 
-        # Find the target user by username
-        targetUser = self.databaseManager.getUserByUsername(target)
+        # Look up the recipient user
+        targetUser = self.databaseManager.getUserByUsername(recipient_username)
         if not targetUser:
             await self.sendEncapsulatedReply(
                 senderTag,
-                "error: target user not found",
+                "error: recipient not found",
                 action="sendResponse",
                 context="chat"
             )
             return
 
-        targetSenderTag = targetUser[2]  # e.g. (username, publicKey, senderTag, ...)
+        targetSenderTag = targetUser[2]
 
-        # Build the message we'll forward to the target user
-        # They may want to see the sender's username + the original content
+        # Now build a minimal payload for the recipient
+        # Only what the recipient truly needs
         forwardPayload = {
-            "action": "incomingMessage",
-            "from": senderUsername,
-            "content": content,
-            "signature": signature
+            "from": sender_username,
+            "content": message_body if message_body else ""
         }
 
-        # Send the forwarded message to the target user
+        # Send it to the recipient
         await self.sendEncapsulatedReply(
             targetSenderTag,
             json.dumps(forwardPayload),
@@ -156,7 +198,7 @@ class MessageUtils:
             context="chat"
         )
 
-        # Optionally, inform the original sender that the message was forwarded successfully
+        # Confirm success to the original sender
         await self.sendEncapsulatedReply(
             senderTag,
             "success",
@@ -164,6 +206,7 @@ class MessageUtils:
             context="chat"
         )
 
+    
     async def handleQuery(self, messageData, senderTag):
         """
         Handle a user discovery query:
@@ -307,24 +350,17 @@ class MessageUtils:
     async def sendEncapsulatedReply(self, recipientTag, content, action="challengeResponse", context=None):
         """
         Send an encapsulated reply message.
-        :param recipientTag: The recipient's sender tag.
-        :param content: The content to send back.
-        :param action: The action type of the reply (default is "challengeResponse").
-        :param context: Additional context for the reply (e.g., 'registration').
         """
-        # Load the server's private key
         private_key = self.cryptoUtils.load_private_key("nymserver")
         if private_key is None:
             print("[ERROR] Server private key not found.")
             return
-        
-        if isinstance(content, str):  # If content is already a JSON string
-            payload = content
-        else:
-            payload = json.dumps(content)  # Serialize the content
+
+        # If content is already a JSON string, keep it as payload; otherwise, json-serialize
+        payload_str = content if isinstance(content, str) else json.dumps(content)
 
         signature = private_key.sign(
-            content.encode(),
+            payload_str.encode(),
             ec.ECDSA(hashes.SHA256())
         )
 
@@ -339,4 +375,3 @@ class MessageUtils:
             "senderTag": recipientTag
         }
         await self.websocketManager.send(replyMessage)
-
