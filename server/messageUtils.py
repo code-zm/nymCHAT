@@ -164,12 +164,17 @@ class MessageUtils:
             context="chat"
         )
 
-
     async def handleQuery(self, messageData, senderTag):
         """
         Handle a user discovery query:
           - The client sends a 'username' field to look up.
-          - We return either the user details or a 'No user found' message.
+          - We return either the user details (username and publicKey) 
+            or "No user found".
+        Example incoming data:
+        {
+          "action": "query",
+          "username": "<some_username>"
+        }
         """
         target_username = messageData.get("username")
         if not target_username:
@@ -185,18 +190,16 @@ class MessageUtils:
         # Look up the user record in the DB
         user = self.databaseManager.getUserByUsername(target_username)
         if user:
-            # Suppose the schema is:
-            # (username, publicKey, senderTag, firstName, lastName)
-            username, publicKey, _, firstName, lastName = user
-            
+            # Depending on your schema, user might be (username, publicKey, senderTag, ...)
+            # We'll just extract the first two.
+            username, publicKey = user[0], user[1]
+
+            # Only return the username and publicKey
             user_data = {
                 "username": username,
-                "publicKey": publicKey,
-                "firstName": firstName if firstName else "",
-                "lastName": lastName if lastName else ""
+                "publicKey": publicKey
             }
-            
-            # Send back the user info (no senderTag)
+
             await self.sendEncapsulatedReply(
                 senderTag,
                 json.dumps(user_data),
@@ -336,3 +339,4 @@ class MessageUtils:
             "senderTag": recipientTag
         }
         await self.websocketManager.send(replyMessage)
+
