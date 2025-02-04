@@ -78,22 +78,26 @@ class MessageUtils:
     async def handleSend(self, messageData, senderTag):
         """
         Handle a direct 'send' message request from a client.
-        
         The incoming messageData should look like:
             {
               "action": "send",
-              "content": "{\"sender\": \"prod\", \"recipient\": \"Nym2025\", \"body\": \"hello\"}",
+              "content": "<JSON string with 'sender', 'recipient', 'body'>",
               "signature": "<hex_signature>"
             }
-        
+        Example:
+            {
+              "action": "send",
+              "content": "{\"sender\": \"prod\", \"recipient\": \"Nym2025\", \"body\": \"hello\"}",
+              "signature": "304402202d111c52f..."
+            }
+
+        Steps:
         1. Parse the raw 'content' string to get 'sender', 'recipient', 'body'.
-        2. Verify the signature using the sender's public key.
-        3. Forward a minimal JSON structure to the recipient:
-           {
-             "action": "incomingMessage",
-             "from":   "<sender_username>",
-             "content": "<actual_message_body>"
-           }
+        2. Look up the sender by username in the DB.
+        3. Check that the sender in the DB has the same senderTag as the inbound message.
+        4. Verify the signature using the sender's public key.
+        5. Look up the recipient in the DB, get their senderTag.
+        6. Forward the message to the recipient, then confirm to the sender.
         """
 
         content_str = messageData.get("content")
@@ -110,6 +114,7 @@ class MessageUtils:
             return
 
         # Parse the inner JSON for actual message details
+        # e.g. {"sender":"prod","recipient":"Nym2025","body":"hello"}
         try:
             content_dict = json.loads(content_str)
         except json.JSONDecodeError:
@@ -124,8 +129,6 @@ class MessageUtils:
         # Extract the sender username and recipient username
         sender_username = content_dict.get("sender")
         recipient_username = content_dict.get("recipient")
-        message_body = content_dict.get("body")
-
         if not sender_username or not recipient_username:
             await self.sendEncapsulatedReply(
                 senderTag,
@@ -135,7 +138,7 @@ class MessageUtils:
             )
             return
 
-        # Look up the sender by username in the DB
+        # Look up the sender by username
         senderRecord = self.databaseManager.getUserByUsername(sender_username)
         if not senderRecord:
             await self.sendEncapsulatedReply(
@@ -146,11 +149,11 @@ class MessageUtils:
             )
             return
 
-        # senderRecord: (username, publicKey, dbSenderTag, ...)
+        # senderRecord typically is (username, publicKey, dbSenderTag, ...)
         dbSenderTag = senderRecord[2]
         dbPublicKey = senderRecord[1]
 
-        # Ensure this inbound message actually came from the user who owns that senderTag
+        # Verify the inbound senderTag matches the DB’s senderTag for this user
         if dbSenderTag != senderTag:
             await self.sendEncapsulatedReply(
                 senderTag,
@@ -160,7 +163,7 @@ class MessageUtils:
             )
             return
 
-        # Verify the sender's signature over the raw content_str
+        # Now verify the signature (over the raw content_str) with the sender's public key
         if not self.cryptoUtils.verify_signature(dbPublicKey, content_str, signature):
             await self.sendEncapsulatedReply(
                 senderTag,
@@ -170,7 +173,7 @@ class MessageUtils:
             )
             return
 
-        # Look up the recipient user
+        # Look up the target/recipient user by username
         targetUser = self.databaseManager.getUserByUsername(recipient_username)
         if not targetUser:
             await self.sendEncapsulatedReply(
@@ -181,16 +184,18 @@ class MessageUtils:
             )
             return
 
+        # The recipient's senderTag is usually at index 2
         targetSenderTag = targetUser[2]
 
-        # Now build a minimal payload for the recipient
-        # Only what the recipient truly needs
+        # Build the payload that we'll forward to the recipient
         forwardPayload = {
-            "from": sender_username,
-            "content": message_body if message_body else ""
+            "sender": sender_username,
+            # Forward the original content string if the recipient needs 
+            # to verify the signature or parse the 'body' themselves.
+            "body": json.loads(content_str)["body"],
         }
 
-        # Send it to the recipient
+        # Send it to the recipient (using their senderTag)
         await self.sendEncapsulatedReply(
             targetSenderTag,
             json.dumps(forwardPayload),
@@ -198,7 +203,7 @@ class MessageUtils:
             context="chat"
         )
 
-        # Confirm success to the original sender
+        # Optionally confirm to the sender that we forwarded the message
         await self.sendEncapsulatedReply(
             senderTag,
             "success",
@@ -350,17 +355,24 @@ class MessageUtils:
     async def sendEncapsulatedReply(self, recipientTag, content, action="challengeResponse", context=None):
         """
         Send an encapsulated reply message.
+        :param recipientTag: The recipient's sender tag.
+        :param content: The content to send back.
+        :param action: The action type of the reply (default is "challengeResponse").
+        :param context: Additional context for the reply (e.g., 'registration').
         """
+        # Load the server's private key
         private_key = self.cryptoUtils.load_private_key("nymserver")
         if private_key is None:
             print("[ERROR] Server private key not found.")
             return
-
-        # If content is already a JSON string, keep it as payload; otherwise, json-serialize
-        payload_str = content if isinstance(content, str) else json.dumps(content)
+        
+        if isinstance(content, str):  # If content is already a JSON string
+            payload = content
+        else:
+            payload = json.dumps(content)  # Serialize the content
 
         signature = private_key.sign(
-            payload_str.encode(),
+            content.encode(),
             ec.ECDSA(hashes.SHA256())
         )
 
