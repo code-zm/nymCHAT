@@ -81,25 +81,26 @@ class MessageUtils:
         The incoming messageData should look like:
             {
               "action": "send",
-              "content": "<JSON string with 'sender', 'recipient', 'body'>",
+              "content": "<JSON string with 'sender', 'recipient', 'body', and optionally 'senderPublicKey'>",
               "signature": "<hex_signature>"
             }
         Example:
             {
               "action": "send",
-              "content": "{\"sender\": \"prod\", \"recipient\": \"Nym2025\", \"body\": \"hello\"}",
+              "content": "{\"sender\": \"prod\", \"recipient\": \"Nym2025\", \"body\": \"hello\", \"senderPublicKey\": \"-----BEGIN PUBLIC KEY-----\\n...\"}",
               "signature": "304402202d111c52f..."
             }
-
         Steps:
-        1. Parse the raw 'content' string to get 'sender', 'recipient', 'body'.
-        2. Look up the sender by username in the DB.
-        3. Check that the sender in the DB has the same senderTag as the inbound message.
-        4. Verify the signature using the sender's public key.
-        5. Look up the recipient in the DB, get their senderTag.
-        6. Forward the message to the recipient, then confirm to the sender.
+          1. Parse the raw 'content' string.
+          2. Verify that the sender and recipient fields exist.
+          3. Look up the sender by username in the database.
+          4. Check that the senderTag in the inbound message matches the one stored in the DB.
+          5. Verify the signature using the sender's public key.
+          6. Look up the recipient in the DB and obtain their senderTag.
+          7. Build the forward payload—if a senderPublicKey is present in the original content,
+             include it in the payload.
+          8. Forward the message to the recipient and confirm success to the sender.
         """
-
         content_str = messageData.get("content")
         signature = messageData.get("signature")
 
@@ -113,8 +114,7 @@ class MessageUtils:
             )
             return
 
-        # Parse the inner JSON for actual message details
-        # e.g. {"sender":"prod","recipient":"Nym2025","body":"hello"}
+        # Parse the inner JSON for actual message details.
         try:
             content_dict = json.loads(content_str)
         except json.JSONDecodeError:
@@ -126,7 +126,7 @@ class MessageUtils:
             )
             return
 
-        # Extract the sender username and recipient username
+        # Extract sender and recipient usernames.
         sender_username = content_dict.get("sender")
         recipient_username = content_dict.get("recipient")
         if not sender_username or not recipient_username:
@@ -138,7 +138,7 @@ class MessageUtils:
             )
             return
 
-        # Look up the sender by username
+        # Look up the sender by username.
         senderRecord = self.databaseManager.getUserByUsername(sender_username)
         if not senderRecord:
             await self.sendEncapsulatedReply(
@@ -153,7 +153,7 @@ class MessageUtils:
         dbSenderTag = senderRecord[2]
         dbPublicKey = senderRecord[1]
 
-        # Verify the inbound senderTag matches the DB’s senderTag for this user
+        # Verify the inbound senderTag matches the DB’s senderTag.
         if dbSenderTag != senderTag:
             await self.sendEncapsulatedReply(
                 senderTag,
@@ -163,7 +163,7 @@ class MessageUtils:
             )
             return
 
-        # Now verify the signature (over the raw content_str) with the sender's public key
+        # Verify the signature (over the raw content_str) using the sender's public key.
         if not self.cryptoUtils.verify_signature(dbPublicKey, content_str, signature):
             await self.sendEncapsulatedReply(
                 senderTag,
@@ -173,7 +173,7 @@ class MessageUtils:
             )
             return
 
-        # Look up the target/recipient user by username
+        # Look up the target (recipient) by username.
         targetUser = self.databaseManager.getUserByUsername(recipient_username)
         if not targetUser:
             await self.sendEncapsulatedReply(
@@ -184,18 +184,19 @@ class MessageUtils:
             )
             return
 
-        # The recipient's senderTag is usually at index 2
+        # The recipient's senderTag is usually at index 2.
         targetSenderTag = targetUser[2]
 
-        # Build the payload that we'll forward to the recipient
+        # Build the forward payload.
         forwardPayload = {
             "sender": sender_username,
-            # Forward the original content string if the recipient needs 
-            # to verify the signature or parse the 'body' themselves.
-            "body": json.loads(content_str)["body"],
+            "body": content_dict.get("body")
         }
+        # Check if the senderPublicKey field exists in the original content.
+        if "senderPublicKey" in content_dict:
+            forwardPayload["senderPublicKey"] = content_dict["senderPublicKey"]
 
-        # Send it to the recipient (using their senderTag)
+        # Forward the message to the recipient.
         await self.sendEncapsulatedReply(
             targetSenderTag,
             json.dumps(forwardPayload),
@@ -203,13 +204,14 @@ class MessageUtils:
             context="chat"
         )
 
-        # Optionally confirm to the sender that we forwarded the message
+        # Confirm success to the sender.
         await self.sendEncapsulatedReply(
             senderTag,
             "success",
             action="sendResponse",
             context="chat"
         )
+
 
     
     async def handleQuery(self, messageData, senderTag):
