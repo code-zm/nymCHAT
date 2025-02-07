@@ -4,6 +4,7 @@ from websocketUtils import WebsocketUtils
 from dbUtils import DbUtils
 from messageUtils import MessageUtils
 from cryptographyUtils import CryptoUtils
+from logConfig import logger
 
 async def main():
     # Initialize components
@@ -21,26 +22,26 @@ async def main():
 
     try:
         # Connect to WebSocket
-        print("[INFO] Connecting to WebSocket...")
+        logger.info("Connecting to WebSocket...")
         await websocket_manager.connect()
 
-        print("[INFO] Waiting for incoming messages...")
+        logger.info("Waiting for incoming messages...")
 
         # Keep the event loop running
         while True:
             await asyncio.sleep(1)  # Prevent busy-waiting
 
     except asyncio.CancelledError:
-        print("[INFO] Main coroutine was cancelled.")
+        logger.info("Main coroutine was cancelled.")
         # Perform any additional cleanup if necessary
         raise
     except KeyboardInterrupt:
-        print("[INFO] Received KeyboardInterrupt. Closing gracefully...")
+        logger.info("Received KeyboardInterrupt. Closing gracefully...")
     except Exception as e:
-        print(f"[ERROR] {e}")
+        logger.error(f"Error occurred: {e}")
     finally:
         # Clean up resources
-        print("[INFO] Closing connections...")
+        logger.info("Closing connections...")
         await websocket_manager.close()
         database_manager.close()
 
@@ -48,6 +49,6 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("[INFO] Application interrupted by user.")
+        logger.info("Application interrupted by user.")
     except asyncio.CancelledError:
-        print("[INFO] Application shutdown gracefully.")
+        logger.info("Application shutdown gracefully.")

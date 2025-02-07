@@ -78,29 +78,8 @@ class MessageUtils:
     async def handleSend(self, messageData, senderTag):
         """
         Handle a direct 'send' message request from a client.
-        The incoming messageData should look like:
-            {
-              "action": "send",
-              "content": "<JSON string with 'sender', 'recipient', 'body', and optionally 'senderPublicKey'>",
-              "signature": "<hex_signature>"
-            }
-        Example:
-            {
-              "action": "send",
-              "content": "{\"sender\": \"prod\", \"recipient\": \"Nym2025\", \"body\": \"hello\", \"senderPublicKey\": \"-----BEGIN PUBLIC KEY-----\\n...\"}",
-              "signature": "304402202d111c52f..."
-            }
-        Steps:
-          1. Parse the raw 'content' string.
-          2. Verify that the sender and recipient fields exist.
-          3. Look up the sender by username in the database.
-          4. Check that the senderTag in the inbound message matches the one stored in the DB.
-          5. Verify the signature using the sender's public key.
-          6. Look up the recipient in the DB and obtain their senderTag.
-          7. Build the forward payload—if a senderPublicKey is present in the original content,
-             include it in the payload.
-          8. Forward the message to the recipient and confirm success to the sender.
         """
+
         content_str = messageData.get("content")
         signature = messageData.get("signature")
 
@@ -149,21 +128,11 @@ class MessageUtils:
             )
             return
 
-        # senderRecord typically is (username, publicKey, dbSenderTag, ...)
+        # Extract sender details from the database.
         dbSenderTag = senderRecord[2]
         dbPublicKey = senderRecord[1]
 
-        # Verify the inbound senderTag matches the DB’s senderTag.
-        if dbSenderTag != senderTag:
-            await self.sendEncapsulatedReply(
-                senderTag,
-                "error: senderTag mismatch",
-                action="sendResponse",
-                context="chat"
-            )
-            return
-
-        # Verify the signature (over the raw content_str) using the sender's public key.
+        # Verify the signature using the sender's public key.
         if not self.cryptoUtils.verify_signature(dbPublicKey, content_str, signature):
             await self.sendEncapsulatedReply(
                 senderTag,
@@ -173,7 +142,11 @@ class MessageUtils:
             )
             return
 
-        # Look up the target (recipient) by username.
+        # Check if the senderTag has changed.
+        if dbSenderTag != senderTag:
+            self.databaseManager.updateUserField(sender_username, "senderTag", senderTag)
+
+        # Look up the recipient by username.
         targetUser = self.databaseManager.getUserByUsername(recipient_username)
         if not targetUser:
             await self.sendEncapsulatedReply(
@@ -184,7 +157,7 @@ class MessageUtils:
             )
             return
 
-        # The recipient's senderTag is usually at index 2.
+        # Extract recipient senderTag.
         targetSenderTag = targetUser[2]
 
         # Build the forward payload.
@@ -192,7 +165,7 @@ class MessageUtils:
             "sender": sender_username,
             "body": content_dict.get("body")
         }
-        # Check if the senderPublicKey field exists in the original content.
+        # Include sender's public key if present.
         if "senderPublicKey" in content_dict:
             forwardPayload["senderPublicKey"] = content_dict["senderPublicKey"]
 
@@ -338,17 +311,41 @@ class MessageUtils:
         user_details = self.NONCES.get(senderTag)
 
         if not user_details:
-            await self.sendEncapsulatedReply(senderTag, "error: no pending login for sender", action="challengeResponse", context="login")
+            await self.sendEncapsulatedReply(
+                senderTag,
+                "error: no pending login for sender",
+                action="challengeResponse",
+                context="login"
+            )
             return
 
         username, publicKey, nonce = user_details
 
         # Verify the signature
         if self.cryptoUtils.verify_signature(publicKey, nonce, signature):
-            await self.sendEncapsulatedReply(senderTag, "success", action="challengeResponse", context="login")
+            # Look up the user in the database
+            userRecord = self.databaseManager.getUserByUsername(username)
+            if userRecord:
+                dbSenderTag = userRecord[2]  # Stored senderTag
+
+                # If the senderTag has changed, update it in the database
+                if dbSenderTag != senderTag:
+                    self.databaseManager.updateUserField(username, "senderTag", senderTag)
+
+            await self.sendEncapsulatedReply(
+                senderTag,
+                "success",
+                action="challengeResponse",
+                context="login"
+            )
             del self.NONCES[senderTag]  # Clean up after successful login
         else:
-            await self.sendEncapsulatedReply(senderTag, "error: invalid signature", action="challengeResponse", context="login")
+            await self.sendEncapsulatedReply(
+                senderTag,
+                "error: invalid signature",
+                action="challengeResponse",
+                context="login"
+            )
             del self.NONCES[senderTag]
 
 
@@ -389,3 +386,4 @@ class MessageUtils:
             "senderTag": recipientTag
         }
         await self.websocketManager.send(replyMessage)
+

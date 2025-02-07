@@ -1,23 +1,23 @@
-# dbUtils.py
 import sqlite3
 import json
 import os
+from logConfig import logger
 
 class DbUtils:
     def __init__(self, dbPath="nym_server.db"):
         self.dbPath = dbPath
 
         if not os.path.exists(dbPath):
-            print(f"[INFO] Initializing new database at {dbPath}.")
+            logger.info(f"Initializing new database at {dbPath}.")
         else:
-            print(f"[INFO] Using existing database at {dbPath}.")
+            logger.info(f"Using existing database at {dbPath}.")
 
         self.connection = sqlite3.connect(dbPath, check_same_thread=False)
         self.cursor = self.connection.cursor()
         self._initializeTables()
 
     def _initializeTables(self):
-        print("[INFO] Ensuring necessary database tables exist...")
+        logger.info("Ensuring necessary database tables exist...")
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
@@ -40,8 +40,9 @@ class DbUtils:
                 (username, publicKey, senderTag),
             )
             self.connection.commit()
+            logger.info(f"User {username} added successfully.")
         except sqlite3.IntegrityError as e:
-            print(f"Error adding user: {e}")
+            logger.error(f"Error adding user {username}: {e}")
             return False
         return True
 
@@ -57,9 +58,10 @@ class DbUtils:
         try:
             self.cursor.execute(f"UPDATE users SET {field} = ? WHERE username = ?", (value, username))
             self.connection.commit()
+            logger.info(f"User {username} field {field} updated to {value}.")
             return True
         except sqlite3.Error as e:
-            print(f"Error updating user: {e}")
+            logger.error(f"Error updating user {username} field {field}: {e}")
             return False
 
     def addGroup(self, groupId, initialUsers):
@@ -69,8 +71,9 @@ class DbUtils:
                 (groupId, json.dumps(initialUsers)),
             )
             self.connection.commit()
+            logger.info(f"Group {groupId} added successfully.")
         except sqlite3.IntegrityError as e:
-            print(f"Error adding group: {e}")
+            logger.error(f"Error adding group {groupId}: {e}")
             return False
         return True
 
@@ -79,6 +82,5 @@ class DbUtils:
         return self.cursor.fetchone()
 
     def close(self):
-        print("[INFO] Closing database connection.")
+        logger.info("Closing database connection.")
         self.connection.close()
-
