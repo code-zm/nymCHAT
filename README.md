@@ -10,7 +10,7 @@ The NymDirectory is the main server that NymCHAT clients communicate with. It al
    
 ### 2. Pseudonymous Messaging
    - Users send and receive end to end encrypted messages, routed via SURB. Users just need to specify the recipient's username. 
-   - The server forwards messages without knowing the sender or recipient by utilizing the Nym mixnet's privacy features.
+   - The server uses SURBs to route all messages, allowing clients to never reveal nym-addresses.
 
 ### 3. Anonymous User Discovery
    - Users can anonymously query for any user or group based on username or group ID. 
