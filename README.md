@@ -24,7 +24,7 @@ Monitors and restarts the Nym client if it crashes or encounters an error.
 Contains utility functions for cryptographic operations such as key generation, signing, and verifying messages.
 
 ### dbUtils.py
-Handles interactions with the SQLite database, including user registration and group management.
+Handles interactions with the SQLite database, including user registration and queries.
 
 ### logConfig.py
 Configures logging for the server, logging errors, info, and debug messages.
@@ -46,7 +46,7 @@ Manages WebSocket communication with the Nym client and facilitates sending/rece
     - The sender encrypts and signs a message for a recipient. The sender forwards this message to the directory. 
 
 ## Database Schema
-The server uses an SQLite database to manage users and groups. The database schema is as follows:
+The server uses an SQLite database to manage users. The database schema is as follows:
 
 - **users table**: Stores the username, public key, and sender tag for each user.
 ## Logging
