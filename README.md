@@ -44,6 +44,8 @@ Manages WebSocket communication with the Nym client and facilitates sending/rece
 
 2. **Message Sending**:
     - The sender encrypts and signs a message for a recipient. The sender forwards this message to the directory. 
+This is the general path of normal messages:
+Client -> Mixnet -> Directory -> Mixnet -> Client
 
 ## Database Schema
 The server uses an SQLite database to manage users. The database schema is as follows:
