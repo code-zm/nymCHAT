@@ -44,7 +44,6 @@ Manages WebSocket communication with the Nym client and facilitates sending/rece
 
 2. **Message Sending**:
     - The sender encrypts and signs a message for a recipient. The sender forwards this message to the directory. 
-    - The server verifies the signature. If successful, it looks up the sender tag of the intended recipient by username and forwards the message to them.
 
 ## Database Schema
 The server uses an SQLite database to manage users and groups. The database schema is as follows:
