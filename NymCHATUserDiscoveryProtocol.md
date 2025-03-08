@@ -9,14 +9,7 @@ Based on the Pudding Protocol: https://arxiv.org/abs/2311.10825
 - Finally, the contacted user can reply or ignore.
 
 ---
-#### Table of Contents
-[[#1. Overview]]
-[[#2. Architecture Components]]
-[[#3. Data Structures & Keys]]
-[[#4. Protocol Flow]]
-[[#5. Putting It All Together]]
 
----
 ## 1. Overview
 
 - **Goal**: Provide a metadata-private means for one user (Alice) to discover another user (Bob) using only a short username (e.g. `bob99`), rather than an email address / other real world ID.
