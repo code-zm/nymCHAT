@@ -136,14 +136,16 @@ A succinct outline of the full flow:
     3. Node sends back a challenge `nonce_server`.
     4. Bob signs it with `sk_bob → signature_bob`.
     5. Node verifies & stores `(bob_username → nym_address, pk_bob)`.
+
 2. **User Discovery**
-    6. Alice obtains a fresh `lookup_nonce` and a SURB `surb_A` to get replies.
-    7. She sends `(bob_username, lookup_nonce, surb_A)` to each discovery node.
-    8. Each node:
+    1. Alice obtains a fresh `lookup_nonce` and a SURB `surb_A` to get replies.
+    2. She sends `(bob_username, lookup_nonce, surb_A)` to each discovery node.
+    3. Each node:
         - Looks up `(bob_username → pk_bob, nym_address)` or uses a black‑hole identity.
         - Creates a _deterministic SURB for Bob_, or a _fake SURB_, both seeded by `K = KDF(k, bob_username, lookup_nonce)`.
         - Returns that SURB to Alice via `surb_A`.
-    9. Alice collects `f+1` identical SURBs → uses that route to reach Bob.
+    4. Alice collects `f+1` identical SURBs → uses that route to reach Bob.
+
 3. **Initial Contact**
     1. Using the returned “real” SURB (if it is real), Alice sends an encrypted message to Bob with an ephemeral key or a signature proving her own username.
     2. Bob verifies Alice’s proof as needed, and they establish an authenticated session. If Bob is offline initially, the gateway buffers messages.
