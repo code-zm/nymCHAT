@@ -94,14 +94,14 @@ let bob_username = "bob99".to_owned();
     - Each node uses `K = KDF(k, bob_username, lookup_nonce)` as the PRNG seed.
     - If `bob_username` is found, it calls
 ```rust
-let surb_for_bob = deterministic_surb(     
+let surb_for_bob = generate_surb(     
 	&nym_address, // pk_bob, gateway addr, etc.     
 	K );
 ```   
 
 Otherwise, it calls
 ```rust
-let surb_for_bob = deterministic_surb(    
+let surb_for_bob = generate_furb(    
 	&fake_contact_info, // black-hole     
 	K );
 ```
