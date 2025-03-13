@@ -61,7 +61,7 @@ class DbUtils:
         try:
             self.cursor.execute(f"UPDATE users SET {field} = ? WHERE username = ?", (value, username))
             self.connection.commit()
-            logger.info(f"User {username} field {field} updated to {value}.")
+            logger.info(f"User {username} field {field} updated")
             return True
         except sqlite3.Error as e:
             logger.error(f"Error updating user {username} field {field}: {e}")
