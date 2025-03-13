@@ -6,20 +6,26 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature, decode_dss_signature
 from cryptographyUtils import CryptoUtils
+from envLoader import load_env
+
+load_env()
+
 
 class MessageUtils:
     NONCES = {}  # Temporary storage for nonces
     PENDING_USERS = {}  # Temporary storage for user details during registration
 
     def __init__(self, websocketManager, databaseManager, crypto_utils):
+        SERVER_USERNAME = os.getenv("SERVER_USERNAME", "nymserver")
+        SERVER_KEY_PATH = os.path.join(os.getenv("KEYS_DIR", "storage/keys"), f"{SERVER_USERNAME}_keys")
+
         self.websocketManager = websocketManager
         self.databaseManager = databaseManager
-        self.cryptoUtils = CryptoUtils()
-
+        self.cryptoUtils = CryptoUtils(SERVER_KEY_PATH)
         # Ensure the server's key pair exists
-        if not os.path.exists("keys/nymserver_private_key.pem"):
+        if not os.path.exists(SERVER_KEY_PATH):
             print("[INFO] Generating server key pair...")
-            self.cryptoUtils.generate_key_pair("nymserver")
+            self.cryptoUtils.generate_key_pair(SERVER_USERNAME)
             print("[INFO] Server key pair generated.")
 
     def verify_signature(self, publicKeyPem, signature, message):

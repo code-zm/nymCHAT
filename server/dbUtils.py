@@ -2,10 +2,13 @@ import sqlite3
 import json
 import os
 from logConfig import logger
+from envLoader import load_env
+
+load_env()
 
 class DbUtils:
-    def __init__(self, dbPath="nym_server.db"):
-        self.dbPath = dbPath
+    def __init__(self, dbPath):
+        self.dbPath = os.getenv("DATABASE_PATH", "storage/nym_server.db")
 
         if not os.path.exists(dbPath):
             logger.info(f"Initializing new database at {dbPath}.")

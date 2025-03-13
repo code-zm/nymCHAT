@@ -3,14 +3,16 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature, decode_dss_signature
 from logConfig import logger
+from envLoader import load_env
+
+load_env()
 
 class CryptoUtils:
-    def __init__(self, key_dir="keys"):
+    def __init__(self, key_dir):
         """Initialize the CryptoUtils with a directory for storing keys."""
-        self.key_dir = key_dir
-        self.private_key = None  # Will store the loaded private key in memory
-        if not os.path.exists(key_dir):
-            os.makedirs(key_dir)
+        self.key_dir = os.getenv("KEYS_DIR", "storage/keys")
+        if not os.path.exists(self.key_dir):
+            os.makedirs(self.key_dir)
             logger.info(f"Created key directory at {key_dir}")
 
     def generate_key_pair(self, username):
@@ -18,9 +20,10 @@ class CryptoUtils:
         try:
             private_key = ec.generate_private_key(ec.SECP256R1())
             public_key = private_key.public_key()
-
-            private_key_path = os.path.join(self.key_dir, f"{username}_private_key.pem")
-            public_key_path = os.path.join(self.key_dir, f"{username}_public_key.pem")
+            private_key_filename = f"{username}_private_key.pem"
+            public_key_filename = f"{username}_public_key.pem"
+            private_key_path = os.path.join(self.key_dir, private_key_filename)
+            public_key_path = os.path.join(self.key_dir, public_key_filename)
             
             # Save private key
             with open(private_key_path, "wb") as f:
