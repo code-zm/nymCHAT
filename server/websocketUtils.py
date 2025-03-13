@@ -18,7 +18,7 @@ class WebsocketUtils:
             response = await self.websocket.recv()
             data = json.loads(response)
             self_address = data.get("address")
-            logger.info("Connected to WebSocket. Your Nym Address:", self_address)
+            logger.info(f"Connected to WebSocket. Your Nym Address: {self_address}")
 
             # Start listening for incoming messages
             await self.receive_messages()
