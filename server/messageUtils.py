@@ -1,6 +1,7 @@
 import json
 import secrets
 import os
+import re
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
@@ -27,6 +28,12 @@ class MessageUtils:
             print("[INFO] Generating server key pair...")
             self.cryptoUtils.generate_key_pair(SERVER_USERNAME)
             print("[INFO] Server key pair generated.")
+    
+    @staticmethod
+    def is_valid_username(username):
+        """Validates that the username contains only letters, numbers, '-', or '_'"""
+        return bool(re.fullmatch(r"[A-Za-z0-9_-]+", username))
+
 
     def verify_signature(self, publicKeyPem, signature, message):
         try:
@@ -252,6 +259,10 @@ class MessageUtils:
 
         if not username or not publicKey:
             await self.sendEncapsulatedReply(senderTag, "error: missing username or public key", action="challengeResponse", context="registration")
+            return
+
+        if not MessageUtils.is_valid_username(username):
+            await self.sendEncapsulatedReply(senderTag, "error: invalid username format", action="challengeResponse", context="registration")
             return
 
         if self.databaseManager.getUserByUsername(username):
