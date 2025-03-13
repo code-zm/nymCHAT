@@ -11,6 +11,7 @@ class CryptoUtils:
     def __init__(self, key_dir):
         """Initialize the CryptoUtils with a directory for storing keys."""
         self.key_dir = os.getenv("KEYS_DIR", "storage/keys")
+        self.private_key = None
         if not os.path.exists(self.key_dir):
             os.makedirs(self.key_dir)
             logger.info(f"Created key directory at {key_dir}")

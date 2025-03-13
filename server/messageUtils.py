@@ -12,40 +12,30 @@ from logConfig import logger
 
 load_env()
 
-
 class MessageUtils:
     NONCES = {}  # Temporary storage for nonces
     PENDING_USERS = {}  # Temporary storage for user details during registration
 
     def __init__(self, websocketManager, databaseManager, crypto_utils):
-        SERVER_USERNAME = os.getenv("SERVER_USERNAME", "nymserver")
-        SERVER_KEY_PATH = os.path.join(os.getenv("KEYS_DIR", "storage/keys"), f"{SERVER_USERNAME}_keys")
+        SERVER_USERNAME = os.getenv("SERVER_USERNAME")
+        SERVER_KEY_PATH = os.getenv("KEYS_DIR")
 
         self.websocketManager = websocketManager
         self.databaseManager = databaseManager
         self.cryptoUtils = CryptoUtils(SERVER_KEY_PATH)
+
+        private_key_path = os.path.join(os.getenv("KEYS_DIR", "storage/keys"), f"{SERVER_USERNAME}_private_key.pem")
+
         # Ensure the server's key pair exists
-        if not os.path.exists(SERVER_KEY_PATH):
+        if not os.path.exists(private_key_path):
             logger.info("Generating server key pair...")
             self.cryptoUtils.generate_key_pair(SERVER_USERNAME)
             logger.info("Server key pair generated.")
-    
+
     @staticmethod
     def is_valid_username(username):
         """Validates that the username contains only letters, numbers, '-', or '_'"""
         return bool(re.fullmatch(r"[A-Za-z0-9_-]+", username))
-
-
-    def verify_signature(self, publicKeyPem, signature, message):
-        try:
-            publicKey = load_pem_private_key(publicKeyPem.encode(), None)
-            publicKey.verify(
-                signature, message.encode(), ec.ECDSA(hashes.SHA256())
-            )
-            return True
-        except Exception as e:
-            logger.error(f"Error verifying signature: {e}")
-            return False
 
     async def processMessage(self, messageData):
         messageType = messageData.get("type")
@@ -87,7 +77,6 @@ class MessageUtils:
                 logger.error(f"Unknown encapsulated action: {action}")
         except json.JSONDecodeError:
             logger.error("Error decoding encapsulated message")
-
 
     async def handleSend(self, messageData, senderTag):
         """
@@ -199,8 +188,6 @@ class MessageUtils:
             context="chat"
         )
 
-
-    
     async def handleQuery(self, messageData, senderTag):
         """
         Handle a user discovery query:
@@ -251,8 +238,6 @@ class MessageUtils:
                 action="queryResponse",
                 context="query"
             )
-
-
 
     async def handleRegister(self, messageData, senderTag):
         username = messageData.get("usernym")
@@ -320,7 +305,6 @@ class MessageUtils:
         # Send the challenge to the client
         await self.sendEncapsulatedReply(senderTag, json.dumps({"nonce": nonce}), action="challenge", context="login")
 
-
     async def handleLoginResponse(self, messageData, senderTag):
         """
         Handle the login response from the client.
@@ -366,9 +350,6 @@ class MessageUtils:
             )
             del self.NONCES[senderTag]
 
-
-
-
     async def sendEncapsulatedReply(self, recipientTag, content, action="challengeResponse", context=None):
         """
         Send an encapsulated reply message.
@@ -378,15 +359,15 @@ class MessageUtils:
         :param context: Additional context for the reply (e.g., 'registration').
         """
         # Load the server's private key
-        private_key = self.cryptoUtils.load_private_key("nymserver")
+        private_key = self.cryptoUtils.load_private_key(os.getenv("SERVER_USERNAME"))
         if private_key is None:
             logger.error("Server private key not found.")
             return
         
-        signature = private_key.sign(
-            content.encode(),
-            ec.ECDSA(hashes.SHA256())
-        )
+        signature = self.cryptoUtils.sign_message(os.getenv("SERVER_USERNAME"), content)
+        if signature is None:
+            logger.error("Failed to sign message.")
+            return
 
         replyMessage = {
             "type": "reply",
@@ -394,7 +375,7 @@ class MessageUtils:
                 "action": action,
                 "content": content,
                 "context": context,
-                "signature": signature.hex()
+                "signature": signature
             }),
             "senderTag": recipientTag
         }
