@@ -8,6 +8,7 @@ from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature, decode_dss_signature
 from cryptographyUtils import CryptoUtils
 from envLoader import load_env
+from logConfig import logger
 
 load_env()
 
@@ -25,9 +26,9 @@ class MessageUtils:
         self.cryptoUtils = CryptoUtils(SERVER_KEY_PATH)
         # Ensure the server's key pair exists
         if not os.path.exists(SERVER_KEY_PATH):
-            print("[INFO] Generating server key pair...")
+            logger.info("Generating server key pair...")
             self.cryptoUtils.generate_key_pair(SERVER_USERNAME)
-            print("[INFO] Server key pair generated.")
+            logger.info("Server key pair generated.")
     
     @staticmethod
     def is_valid_username(username):
@@ -43,7 +44,7 @@ class MessageUtils:
             )
             return True
         except Exception as e:
-            print(f"Error verifying signature: {e}")
+            logger.error(f"Error verifying signature: {e}")
             return False
 
     async def processMessage(self, messageData):
@@ -52,7 +53,7 @@ class MessageUtils:
         if messageType == "received":
             await self.processReceivedMessage(messageData)
         else:
-            print(f"Unknown message type: {messageType}")
+            logger.error(f"Unknown message type: {messageType}")
 
     async def processReceivedMessage(self, messageData):
         encapsulatedJson = messageData.get("message")
@@ -83,9 +84,9 @@ class MessageUtils:
             elif action == "loginResponse":
                 await self.handleLoginResponse(encapsulatedData, senderTag)
             else:
-                print(f"Unknown encapsulated action: {action}")
+                logger.error(f"Unknown encapsulated action: {action}")
         except json.JSONDecodeError:
-            print("Error decoding encapsulated message")
+            logger.error("Error decoding encapsulated message")
 
 
     async def handleSend(self, messageData, senderTag):
@@ -379,14 +380,9 @@ class MessageUtils:
         # Load the server's private key
         private_key = self.cryptoUtils.load_private_key("nymserver")
         if private_key is None:
-            print("[ERROR] Server private key not found.")
+            logger.error("Server private key not found.")
             return
         
-        if isinstance(content, str):  # If content is already a JSON string
-            payload = content
-        else:
-            payload = json.dumps(content)  # Serialize the content
-
         signature = private_key.sign(
             content.encode(),
             ec.ECDSA(hashes.SHA256())

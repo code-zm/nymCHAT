@@ -1,6 +1,7 @@
 import asyncio
 import json
 import websockets
+from logConfig import logger
 
 
 class WebsocketUtils:
@@ -17,30 +18,30 @@ class WebsocketUtils:
             response = await self.websocket.recv()
             data = json.loads(response)
             self_address = data.get("address")
-            print("Connected to WebSocket. Your Nym Address:", self_address)
+            logger.info("Connected to WebSocket. Your Nym Address:", self_address)
 
             # Start listening for incoming messages
             await self.receive_messages()
         except Exception as e:
-            print("Connection error:", e)
+            logger.error(f"Connection error: {e}")
 
     async def receive_messages(self):
         """Listen for incoming messages and forward them to the callback."""
         try:
             while True:
                 raw_message = await self.websocket.recv()
-                print(raw_message)
+                logger.info("Message received")
                 message_data = json.loads(raw_message)
 
                 # Call the callback for further processing
                 if self.message_callback:
                     await self.message_callback(message_data)
                 else:
-                    print(f"[WARNING] No callback set for processing messages. Received: {message_data}")
+                    logger.warning("No callback set for processing messages.")
         except websockets.exceptions.ConnectionClosed:
-            print("Connection closed by the server.")
+            logger.warning("Connection closed by the server.")
         except Exception as e:
-            print(f"Error while receiving messages: {e}")
+            logger.error(f"Error while receiving messages: {e}")
 
     async def send(self, message):
         """Send a message through the WebSocket."""
@@ -49,9 +50,9 @@ class WebsocketUtils:
                 # Convert the dictionary to a JSON string
                 message = json.dumps(message)
             await self.websocket.send(message)
-            print(f"Message sent: {message}")
+            logger.info("Message sent")
         except Exception as e:
-            print(f"Error sending message: {e}")
+            logger.error(f"Error sending message: {e}")
 
     def set_message_callback(self, callback):
         """Set the callback function for processing received messages."""
