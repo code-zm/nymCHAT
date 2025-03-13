@@ -1,7 +1,11 @@
 import logging
+import os
+from envLoader import load_env
+
+load_env()
 
 # Configure logging
-LOG_FILE = "app.log"
+LOG_FILE = os.getenv("LOG_FILE_PATH", "storage/app.log")
 
 logging.basicConfig(
     level=logging.INFO,

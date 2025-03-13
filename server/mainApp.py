@@ -1,16 +1,19 @@
 import asyncio
-import json
 from websocketUtils import WebsocketUtils
 from dbUtils import DbUtils
 from messageUtils import MessageUtils
 from cryptographyUtils import CryptoUtils
 from logConfig import logger
+from envLoader import load_env
+import os
+
+load_env()
 
 async def main():
     # Initialize components
-    websocket_url = "ws://127.0.0.1:1977"
-    db_path = "nym_server.db"
-    key_dir = "keys"  # Directory for storing cryptographic keys
+    websocket_url = os.getenv("WEBSOCKET_URL")
+    db_path = os.getenv("DATABASE_PATH")
+    key_dir = os.getenv("KEYS_DIR")
 
     websocket_manager = WebsocketUtils(websocket_url)
     database_manager = DbUtils(db_path)

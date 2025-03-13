@@ -3,13 +3,16 @@ import time
 import logging
 import os
 import signal
+from envLoader import load_env
+
+load_env()
 
 # Set up logging
 logging.basicConfig(filename="client_monitor.log", level=logging.INFO,
                     format="%(asctime)s - %(levelname)s - %(message)s")
 
 # Command to run the server binary
-server_command = './nym-client run --id code-zm'
+server_command = f'./nym-client run --id {os.getenv("NYM_CLIENT_ID", "default-id")}'
 
 # Function to start the client binary and return the process
 def start_client():
