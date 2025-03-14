@@ -6,19 +6,20 @@ Sender tags correspond with single use reply blocks, which are received from inc
 
 By routing messages via SURB instead of nym client address, we allow fully pseudonymous user discovery and message forwarding. All messages are end to end encrypted by the clients to ensure the server cannot read any message content. Clients also have the ability to send a `handshake` message which reveals their nym address to the intended recipient, allowing all further messages to be sent directly from `client -> client`, instead of `client -> nymDirectory -> client`. The handshake data is encrypted and formatted exactly like a normal encrypted message to prevent the server from learning your nym address.  
 
----
 
 ## Features
 
 **User Registration**
+
    - Users can register using a public key and username. During registration, the server verifies the user's identity through a signed nonce.
 **Pseudonymous Messaging**
+
    - Users send and receive end to end encrypted messages through the nymDirectory by specifying the recipient's username. 
    - The server forwards messages via SURBs. Never learning the addresses of sender or recipient. 
 **Privacy Preserving User Discovery**
+
    - Users can anonymously query for any user who is registered with the nymDirectory. 
 
----
 
 ## Protocol
 Alice wants to send a message to her friend Bob.
@@ -44,7 +45,6 @@ Alice wants to send a message to her friend Bob.
 - The server forwards the encrypted message to Bob via SURB.
 - Bob receives the encrypted message and parses the keys from it. Bob verifies the inner signature against Alice's public key and the encrypted payload. If successful, he derives the same shared secret and decrypts the message. 
 
----
 
 ## Components
 
