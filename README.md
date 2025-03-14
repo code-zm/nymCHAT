@@ -10,14 +10,13 @@ By routing messages via SURB instead of nym client address, we allow fully pseud
 ## Features
 
 **User Registration**
-
    - Users can register using a public key and username. During registration, the server verifies the user's identity through a signed nonce.
-**Pseudonymous Messaging**
 
+**Pseudonymous Messaging**
    - Users send and receive end to end encrypted messages through the nymDirectory by specifying the recipient's username. 
    - The server forwards messages via SURBs. Never learning the addresses of sender or recipient. 
-**Privacy Preserving User Discovery**
 
+**Privacy Preserving User Discovery**
    - Users can anonymously query for any user who is registered with the nymDirectory. 
 
 
