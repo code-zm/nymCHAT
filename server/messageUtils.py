@@ -16,21 +16,20 @@ class MessageUtils:
     NONCES = {}  # Temporary storage for nonces
     PENDING_USERS = {}  # Temporary storage for user details during registration
 
-    def __init__(self, websocketManager, databaseManager, crypto_utils):
+    def __init__(self, websocketManager, databaseManager, crypto_utils, password):
         SERVER_USERNAME = os.getenv("SERVER_USERNAME")
         SERVER_KEY_PATH = os.getenv("KEYS_DIR")
 
         self.websocketManager = websocketManager
         self.databaseManager = databaseManager
-        self.cryptoUtils = CryptoUtils(SERVER_KEY_PATH)
+        self.cryptoUtils = CryptoUtils(SERVER_KEY_PATH, password)
 
-        private_key_path = os.path.join(os.getenv("KEYS_DIR", "storage/keys"), f"{SERVER_USERNAME}_private_key.pem")
+        private_key_path = os.path.join(os.getenv("KEYS_DIR"), f"{SERVER_USERNAME}_private_key.enc")
 
         # Ensure the server's key pair exists
         if not os.path.exists(private_key_path):
-            logger.info("Generating server key pair...")
             self.cryptoUtils.generate_key_pair(SERVER_USERNAME)
-            logger.info("Server key pair generated.")
+            logger.info("Init - Server key pair generated.")
 
     @staticmethod
     def is_valid_username(username):
@@ -43,7 +42,7 @@ class MessageUtils:
         if messageType == "received":
             await self.processReceivedMessage(messageData)
         else:
-            logger.error(f"Unknown message type: {messageType}")
+            logger.error(f"processMessaage - Unknown message type :( | {messageType}")
 
     async def processReceivedMessage(self, messageData):
         encapsulatedJson = messageData.get("message")
@@ -74,9 +73,9 @@ class MessageUtils:
             elif action == "loginResponse":
                 await self.handleLoginResponse(encapsulatedData, senderTag)
             else:
-                logger.error(f"Unknown encapsulated action: {action}")
-        except json.JSONDecodeError:
-            logger.error("Error decoding encapsulated message")
+                logger.error(f"processReceivedMessage - Unknown encapsulated action :( | {action}")
+        except json.JSONDecodeError as e:
+            logger.error(f"processReceivedMessage - Decoding JSON :( | {e}")
 
     async def handleSend(self, messageData, senderTag):
         """
@@ -94,6 +93,7 @@ class MessageUtils:
                 action="sendResponse",
                 context="chat"
             )
+            logger.warning("handleSend - missing content or signature :(")
             return
 
         # Parse the inner JSON for actual message details.
@@ -106,6 +106,7 @@ class MessageUtils:
                 action="sendResponse",
                 context="chat"
             )
+            logger.warning("handleSend - invalid JSON :(")
             return
 
         # Extract sender and recipient usernames.
@@ -118,6 +119,7 @@ class MessageUtils:
                 action="sendResponse",
                 context="chat"
             )
+            logger.warning("handleSend - missing sender/recipient :(")
             return
 
         # Look up the sender by username.
@@ -129,6 +131,7 @@ class MessageUtils:
                 action="sendResponse",
                 context="chat"
             )
+            logger.warning("handleSend - could not find sender in DB :(")
             return
 
         # Extract sender details from the database.
@@ -143,6 +146,7 @@ class MessageUtils:
                 action="sendResponse",
                 context="chat"
             )
+            logger.warning("handleSend - invalid signature :(")
             return
 
         # Check if the senderTag has changed.
@@ -158,6 +162,7 @@ class MessageUtils:
                 action="sendResponse",
                 context="chat"
             )
+            logger.warning("handleSend - could not find recipient in DB :(")
             return
 
         # Extract recipient senderTag.
@@ -209,6 +214,7 @@ class MessageUtils:
                 action="queryResponse",
                 context="query"
             )
+            logger.warning("handleQuery - missing username field :(")
             return
 
         # Look up the user record in the DB
@@ -258,7 +264,7 @@ class MessageUtils:
         # Generate a nonce and store it in PENDING_USERS
         nonce = secrets.token_hex(16)
         self.PENDING_USERS[senderTag] = (username, publicKey, nonce)
-
+        logger.info("handleRegister - sending challenge")
         # Send the challenge to the client
         await self.sendEncapsulatedReply(senderTag, json.dumps({"nonce": nonce}), action="challenge", context="registration")
 
@@ -268,6 +274,7 @@ class MessageUtils:
 
         if not user_details:
             await self.sendEncapsulatedReply(senderTag, "error: no pending registration for sender", action="challengeResponse", context="registration")
+            logger.warning("handleRegistrationResponse - no pending registration for sender :(")
             return
 
         username, publicKey, nonce = user_details
@@ -277,11 +284,13 @@ class MessageUtils:
             if self.databaseManager.addUser(username, publicKey, senderTag):
                 await self.sendEncapsulatedReply(senderTag, "success", action="challengeResponse", context="registration")
                 del self.PENDING_USERS[senderTag]  # Clean up after successful registration
+                logger.info("handleRegistrationResponse - registration successful")
             else:
                 await self.sendEncapsulatedReply(senderTag, "error: database failure", action="challengeResponse", context="registration")
         else:
             await self.sendEncapsulatedReply(senderTag, "error: signature verification failed", action="challengeResponse", context="registration")
             del self.PENDING_USERS[senderTag]  # Clean up after failed verification
+            logger.warning("handleRegistrationResponse - registration failed :(")
 
     async def handleLogin(self, messageData, senderTag):
         """
@@ -291,11 +300,13 @@ class MessageUtils:
 
         if not username:
             await self.sendEncapsulatedReply(senderTag, "error: missing username", action="challengeResponse", context="login")
+            logger.warning("handleLogin - missing username :(")
             return
 
         user = self.databaseManager.getUserByUsername(username)
         if not user:
             await self.sendEncapsulatedReply(senderTag, "error: user not found", action="challengeResponse", context="login")
+            logger.warning("handleLogin - user not found in DB :(")
             return
 
         # Generate a nonce and store it
@@ -304,6 +315,7 @@ class MessageUtils:
 
         # Send the challenge to the client
         await self.sendEncapsulatedReply(senderTag, json.dumps({"nonce": nonce}), action="challenge", context="login")
+        logger.info("handleLogin - sending challenge")
 
     async def handleLoginResponse(self, messageData, senderTag):
         """
@@ -319,6 +331,7 @@ class MessageUtils:
                 action="challengeResponse",
                 context="login"
             )
+            logger.warning("handleLoginResponse - no pending login for sender :(")
             return
 
         username, publicKey, nonce = user_details
@@ -341,6 +354,7 @@ class MessageUtils:
                 context="login"
             )
             del self.NONCES[senderTag]  # Clean up after successful login
+            logger.info("handleLoginResponse - success!")
         else:
             await self.sendEncapsulatedReply(
                 senderTag,
@@ -349,6 +363,7 @@ class MessageUtils:
                 context="login"
             )
             del self.NONCES[senderTag]
+            logger.warning("handleLoginResponse - invalid signature :(")
 
     async def sendEncapsulatedReply(self, recipientTag, content, action="challengeResponse", context=None):
         """
@@ -361,12 +376,12 @@ class MessageUtils:
         # Load the server's private key
         private_key = self.cryptoUtils.load_private_key(os.getenv("SERVER_USERNAME"))
         if private_key is None:
-            logger.error("Server private key not found.")
+            logger.error("sendEncapsulatedReply - server priv key not found :(")
             return
         
         signature = self.cryptoUtils.sign_message(os.getenv("SERVER_USERNAME"), content)
         if signature is None:
-            logger.error("Failed to sign message.")
+            logger.error("sendEncapsulatedReply - failed to sign message :(")
             return
 
         replyMessage = {
@@ -380,4 +395,3 @@ class MessageUtils:
             "senderTag": recipientTag
         }
         await self.websocketManager.send(replyMessage)
-
