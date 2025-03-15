@@ -1,12 +1,15 @@
 import asyncio
 import json
+import os
 import websockets
 from logConfig import logger
+from envLoader import load_env
 
+load_env()
 
 class WebsocketUtils:
-    def __init__(self, server_url="ws://127.0.0.1:1977"):
-        self.server_url = server_url
+    def __init__(self, server_url=None):
+        self.server_url = server_url or os.getenv("WEBSOCKET_URL")
         self.websocket = None
         self.message_callback = None  # Callback for processing messages
 
