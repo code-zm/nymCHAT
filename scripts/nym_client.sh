@@ -9,11 +9,11 @@ NYM_HOME="/home/$NYM_USER"
 # Function to prompt user for .env values and set up .env file
 setup_env_file() {
     REAL_USER=$(logname)
-    REAL_HOME=$(eval echo ~$REAL_USER)
-    ENV_FILE="$REAL_HOME/.env"
-    
+    ORIGINAL_DIR=$(sudo -u "$REAL_USER" pwd)
+    ENV_FILE="$ORIGINAL_DIR/.env"
+
     echo "[PHASE] Setting up .env file..."
-    
+
     read -p "Enter NYM_CLIENT_ID (default: nym_client): " NYM_CLIENT_ID
     NYM_CLIENT_ID=${NYM_CLIENT_ID:-nym_client}
     read -p "Enter DATABASE_PATH (default: storage/${NYM_CLIENT_ID}.db): " DATABASE_PATH
@@ -26,7 +26,7 @@ setup_env_file() {
     WEBSOCKET_URL=${WEBSOCKET_URL:-ws://127.0.0.1:1977}
     read -p "Enter SERVER_USERNAME (default: ${NYM_CLIENT_ID}): " SERVER_USERNAME
     SERVER_USERNAME=${SERVER_USERNAME:-$NYM_CLIENT_ID}
-    
+
     cat > "$ENV_FILE" << EOF
 NYM_CLIENT_ID=$NYM_CLIENT_ID
 DATABASE_PATH=$DATABASE_PATH
@@ -35,10 +35,12 @@ KEYS_DIR=$KEYS_DIR
 WEBSOCKET_URL=$WEBSOCKET_URL
 SERVER_USERNAME=$SERVER_USERNAME
 EOF
-    
+
+    chown "$REAL_USER":"$REAL_USER" "$ENV_FILE"
     echo "[INFO] .env file created at $ENV_FILE"
     export $(grep -v '^#' "$ENV_FILE" | xargs)
 }
+
 
 # Function to check if script is run with sudo/root
 check_root() {
