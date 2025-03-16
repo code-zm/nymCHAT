@@ -4,9 +4,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y
-
-RUN apt-get install build-essential curl -y
+RUN apt-get update && apt-get install -y build-essential curl gettext
 
 # Copy requirements.txt and install dependencies
 COPY requirements.txt /app/
@@ -15,19 +13,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the entire application source code into the container
 COPY . /app
 
-# Ensure `password.txt` is available inside the container
-COPY password.txt /app/password.txt
-
 # Make sure install.sh is executable
 RUN chmod +x scripts/install.sh
 
-# Run install.sh inside Docker (automated setup, NO user input)
-RUN /app/scripts/install.sh
+RUN chmod +x scripts/entrypoint.sh
 
-COPY scripts/entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+# Run install.sh inside Docker (automated setup, NO user input)
+RUN scripts/install.sh
 
 # Set entrypoint to run the Nym client
-ENTRYPOINT ["/app/entrypoint.sh"]
+ENTRYPOINT ["scripts/entrypoint.sh"]
 
 # Start the main Python application

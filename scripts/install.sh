@@ -104,23 +104,24 @@ setup_storage() {
 # Copy encryption password
 setup_encryption_password() {
     log "INFO" "[PHASE] Setting up encryption password..."
-    
-    if [ ! -f "/app/secrets/encryption_password" ]; then
-        if [ -f "/app/password.txt" ]; then
-            log "INFO" "Copying encryption password into /app/secrets/"
-            mkdir -p /app/secrets
-            cp "/app/password.txt" "/app/secrets/encryption_password"
-        else
-            log "WARN" "No password.txt found! Generating a random encryption password."
-            mkdir -p /app/secrets
-            openssl rand -base64 32 > "/app/secrets/encryption_password"
-        fi
-        chmod 600 "/app/secrets/encryption_password"
-        log "INFO" "Encryption password successfully set up in /app/secrets/"
+
+    mkdir -p /app/secrets
+    chmod 700 /app/secrets  # Restrict access to secrets directory
+
+    if [ -f "/app/password.txt" ]; then
+        log "INFO" "Copying provided password to secrets directory."
+        cp "/app/password.txt" "/app/secrets/encryption_password"
+    elif [ ! -f "/app/secrets/encryption_password" ]; then
+        log "WARN" "No password.txt found. Generating a secure password."
+        openssl rand -base64 32 > "/app/secrets/encryption_password"
     else
-        log "INFO" "Encryption password already exists in /app/secrets/. Skipping setup."
+        log "INFO" "Encryption password already exists. Skipping setup."
     fi
+
+    chmod 600 "/app/secrets/encryption_password"
+    log "INFO" "Encryption password setup complete."
 }
+
 
 # Generate .env file from .env.example
 generate_env_file() {
@@ -131,12 +132,15 @@ generate_env_file() {
         exit 1
     fi
 
-    # Replace placeholders and create .env
-    sed "s/{NYM_CLIENT_ID}/$CLIENT_ID/g" "$ENV_EXAMPLE" > "$ENV_FILE"
+    # Use envsubst for safe variable substitution
+    log "INFO" "Substituting environment variables into .env"
+    envsubst < "$ENV_EXAMPLE" > "$ENV_FILE"
 
-    chmod 600 "$ENV_FILE"  # Restrict access for security
-    log "INFO" ".env file created at $ENV_FILE"
+    chmod 600 "$ENV_FILE"  # Secure the file
+    log "INFO" ".env file created successfully at $ENV_FILE"
 }
+
+
 
 # Install Rust if needed
 install_rust() {
