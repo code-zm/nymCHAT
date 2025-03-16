@@ -2,16 +2,16 @@
 set -e
 
 # Define URLs and directories
-NYM_BINARY_URL="https://github.com/nymtech/nym/releases/download/nym-binaries-v2025.4-dorina-patched/nym-client"
+
 CLIENT_ID=${NYM_CLIENT_ID:-"nymserver"}
-ENV_FILE="/app/.env"
-ENV_EXAMPLE="/app/.env.example"
-PASSWORD_FILE="/app/secrets/encryption_password"
-HOST_PASSWORD_FILE="/app/password.txt"  # Expected before copying
-STORAGE_DIR="/app/storage"
+ENV_FILE=".env"
+ENV_EXAMPLE=".env.example"
+PASSWORD_FILE="secrets/encryption_password"
+HOST_PASSWORD_FILE="password.txt"  # Expected before copying
+STORAGE_DIR="storage"
 NYM_CONFIG_DIR="/root/.nym"
 BUILD_DIR="/tmp/nym-build"
-INSTALL_DIR="/app"
+INSTALL_DIR="."
 
 # Logging function
 log() {
@@ -57,32 +57,89 @@ detect_os() {
 install_dependencies() {
     log "INFO" "[PHASE] Installing required system packages..."
 
-    apt-get update
+    apt-get update  # Always update package lists first
 
-    # Install only the absolutely necessary dependencies for Rust and Nym
-    apt-get install -y \
-        git \
-        cmake \
-        pkg-config \
-        libssl-dev
+    if [[ "$ARCH" == "x86_64" || "$ARCH" == "x86" ]]; then
+        log "INFO" "Detected $ARCH, installing only curl (prebuilt binary will be used)"
+        apt-get install -y curl
+    else
+        log "INFO" "Detected $ARCH, installing full build dependencies for Rust"
+        apt-get install -y git build-essential cmake pkg-config libssl-dev curl
+    fi
 
     log "INFO" "System dependencies installed successfully!"
+}
+
+
+# Fetch the latest version of from nymtech/nym repo
+fetch_latest_version() {
+    log "INFO" "Fetching latest Nym release version from GitHub..."
+    LATEST_VERSION=$(curl -fsSL "https://api.github.com/repos/nymtech/nym/releases/latest" | grep '"tag_name":' | cut -d '"' -f 4)
+
+    if [[ -z "$LATEST_VERSION" ]]; then
+        log "ERROR" "Failed to fetch latest version. Exiting."
+        exit 1
+    fi
+
+    NYM_BINARY_URL="https://github.com/nymtech/nym/releases/download/${LATEST_VERSION}/nym-client"
+    HASH_URL="https://github.com/nymtech/nym/releases/download/${LATEST_VERSION}/hashes.json"
+
+    log "INFO" "Latest Nym version: $LATEST_VERSION"
 }
 
 # Install the Nym client binary in /app/
 install_binary() {
     log "INFO" "[PHASE] Installing Nym client binary..."
-    INSTALL_PATH="$INSTALL_DIR/nym-client"
+    local install_path="$INSTALL_DIR/nym-client"
 
-    if [ -f "$INSTALL_PATH" ]; then
-        log "INFO" "Using existing binary"
-        return
-    fi
+    mkdir -p "$INSTALL_DIR"
 
     log "INFO" "Downloading Nym client from $NYM_BINARY_URL"
-    curl -L "$NYM_BINARY_URL" -o "$INSTALL_PATH"
-    chmod +x "$INSTALL_PATH"
-    log "INFO" "Nym client installed in /app/"
+    curl -L "$NYM_BINARY_URL" -o "$install_path"
+    chmod +x "$install_path"
+
+    # Verify the binary
+    verify_binary "$install_path"
+}
+
+# Ensure our download hash matches Nym's
+verify_binary() {
+    local binary="$1"
+    local hash_file="/tmp/hashes.json"
+
+    log "INFO" "Fetching latest hash file from: $HASH_URL"
+    if ! curl -fsSL "$HASH_URL" -o "$hash_file"; then
+        log "ERROR" "Failed to download hash file! Aborting."
+        exit 1
+    fi
+
+    # Calculate the binary's SHA-256 hash
+    local hash
+    if command -v sha256sum >/dev/null; then
+        hash=$(sha256sum "$binary" | cut -d ' ' -f 1)
+    elif command -v shasum >/dev/null; then
+        hash=$(shasum -a 256 "$binary" | cut -d ' ' -f 1)
+    else
+        log "ERROR" "No SHA-256 utility found! Cannot verify binary."
+        exit 1
+    fi
+
+    log "INFO" "Calculated SHA-256: $hash"
+
+    # Extract expected hash from JSON using grep
+    local expected_hash
+    expected_hash=$(grep -A 1 '"nym-client"' "$hash_file" | grep -o '"sha256": "[^"]*' | cut -d '"' -f 4)
+
+    log "INFO" "Expected SHA-256: $expected_hash"
+
+    # Compare hashes
+    if [[ "$hash" == "$expected_hash" ]]; then
+        log "INFO" "✅ Hash verification successful!"
+        return 0
+    else
+        log "ERROR" "❌ Hash verification failed! Binary may be compromised."
+        exit 1
+    fi
 }
 
 # Ensure storage directories exist and have correct permissions
@@ -127,19 +184,49 @@ setup_encryption_password() {
 generate_env_file() {
     log "INFO" "[PHASE] Generating .env file..."
     
+    ENV_EXAMPLE=".env.example"
+    ENV_FILE=".env"
+
     if [ ! -f "$ENV_EXAMPLE" ]; then
-        log "ERROR" ".env.example not found in /app!"
+        log "ERROR" ".env.example not found!"
         exit 1
     fi
 
-    # Use envsubst for safe variable substitution
-    log "INFO" "Substituting environment variables into .env"
-    envsubst < "$ENV_EXAMPLE" > "$ENV_FILE"
+    log "INFO" "Copying .env.example to .env"
+    cp "$ENV_EXAMPLE" "$ENV_FILE"
 
-    chmod 600 "$ENV_FILE"  # Secure the file
-    log "INFO" ".env file created successfully at $ENV_FILE"
+    # First pass: Load NYM_CLIENT_ID early
+    while IFS='=' read -r key value || [ -n "$key" ]; do
+        if [[ "$key" == "NYM_CLIENT_ID" ]]; then
+            export NYM_CLIENT_ID="${!key:-$value}"
+        fi
+    done < "$ENV_EXAMPLE"
+
+    # Second pass: Replace values dynamically
+    while IFS='=' read -r key value || [ -n "$key" ]; do
+        echo "Checking key: $key"
+
+        if [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+            case "$key" in
+                DATABASE_PATH)
+                    value="storage/${NYM_CLIENT_ID}.db"
+                    ;;
+                SERVER_USERNAME)
+                    value="${NYM_CLIENT_ID}"
+                    ;;
+                *)
+                    value="${!key:-$value}"
+                    ;;
+            esac
+
+            echo "Replacing $key=$value"
+            sed -i "s|$key=.*|$key=$value|" "$ENV_FILE"
+        fi
+    done < "$ENV_EXAMPLE"
+
+    chmod 600 "$ENV_FILE"
+    log "INFO" ".env file generated successfully."
 }
-
 
 
 # Install Rust if needed
@@ -188,6 +275,7 @@ log "INFO" "============================================================="
 
 detect_os
 install_dependencies
+fetch_latest_version
 setup_storage
 setup_encryption_password
 generate_env_file
