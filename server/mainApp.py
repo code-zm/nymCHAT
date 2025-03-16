@@ -28,7 +28,6 @@ async def main():
     websocket_url = os.getenv("WEBSOCKET_URL")
     db_path = os.getenv("DATABASE_PATH", "storage/nym_server.db")
     key_dir = os.getenv("KEYS_DIR", "storage/keys")
-    server_username = os.getenv("SERVER_USERNAME")
 
     # Initialize cryptography utility
     cryptography_utils = CryptoUtils(key_dir, password)

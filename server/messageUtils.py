@@ -17,18 +17,18 @@ class MessageUtils:
     PENDING_USERS = {}  # Temporary storage for user details during registration
 
     def __init__(self, websocketManager, databaseManager, crypto_utils, password):
-        SERVER_USERNAME = os.getenv("SERVER_USERNAME")
+        NYM_CLIENT_ID = os.getenv("NYM_CLIENT_ID")
         SERVER_KEY_PATH = os.getenv("KEYS_DIR")
 
         self.websocketManager = websocketManager
         self.databaseManager = databaseManager
         self.cryptoUtils = CryptoUtils(SERVER_KEY_PATH, password)
 
-        private_key_path = os.path.join(os.getenv("KEYS_DIR"), f"{SERVER_USERNAME}_private_key.enc")
+        private_key_path = os.path.join(os.getenv("KEYS_DIR"), f"{NYM_CLIENT_ID}_private_key.enc")
 
         # Ensure the server's key pair exists
         if not os.path.exists(private_key_path):
-            self.cryptoUtils.generate_key_pair(SERVER_USERNAME)
+            self.cryptoUtils.generate_key_pair(NYM_CLIENT_ID)
             logger.info("Init - Server key pair generated.")
 
     @staticmethod
@@ -374,12 +374,12 @@ class MessageUtils:
         :param context: Additional context for the reply (e.g., 'registration').
         """
         # Load the server's private key
-        private_key = self.cryptoUtils.load_private_key(os.getenv("SERVER_USERNAME"))
+        private_key = self.cryptoUtils.load_private_key(os.getenv("NYM_CLIENT_ID"))
         if private_key is None:
             logger.error("sendEncapsulatedReply - server priv key not found :(")
             return
         
-        signature = self.cryptoUtils.sign_message(os.getenv("SERVER_USERNAME"), content)
+        signature = self.cryptoUtils.sign_message(os.getenv("NYM_CLIENT_ID"), content)
         if signature is None:
             logger.error("sendEncapsulatedReply - failed to sign message :(")
             return
