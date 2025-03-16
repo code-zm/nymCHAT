@@ -4,7 +4,9 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y curl
+RUN apt-get update && apt-get install -y
+
+RUN apt-get install build-essential curl -y
 
 # Copy requirements.txt and install dependencies
 COPY requirements.txt /app/
@@ -24,9 +26,6 @@ RUN /app/scripts/install.sh
 
 COPY scripts/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
-
-# Expose WebSocket port used by the Nym client
-EXPOSE 1977
 
 # Set entrypoint to run the Nym client
 ENTRYPOINT ["/app/entrypoint.sh"]

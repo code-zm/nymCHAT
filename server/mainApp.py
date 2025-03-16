@@ -13,7 +13,7 @@ load_env()
 
 
 def get_encryption_password():
-    secret_path = "/app/secrets/encryption_password"
+    secret_path = os.getenv("SECRET_PATH")
     if os.path.exists(secret_path):
         with open(secret_path, "r") as f:
             return f.read().strip()
