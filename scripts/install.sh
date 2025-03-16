@@ -11,7 +11,7 @@ HOST_PASSWORD_FILE="password.txt"  # Expected before copying
 STORAGE_DIR="storage"
 NYM_CONFIG_DIR="/root/.nym"
 BUILD_DIR="/tmp/nym-build"
-INSTALL_DIR="."
+INSTALL_DIR="/app"
 
 # Logging function
 log() {
