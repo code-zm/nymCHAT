@@ -241,6 +241,17 @@ build_nym_client() {
     rm -rf "$BUILD_DIR"
 }
 
+initialize_nym_client() {
+    local nym_client_dir="/root/.nym/clients/$NYM_CLIENT_ID"
+
+    if [ ! -d "$nym_client_dir" ]; then
+        echo "[INFO] No existing Nym config found. Initializing..."
+        /app/nym-client init --id "$NYM_CLIENT_ID" --host 0.0.0.0
+    else
+        echo "[INFO] Existing Nym config found. Skipping init."
+    fi
+}
+
 # Main execution flow
 log "INFO" "============================================================="
 log "INFO" "NYM CLIENT INSTALLATION AND CONFIGURATION"

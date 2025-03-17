@@ -143,6 +143,7 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, graceful_shutdown)
     
     initialize_nym_client()
+
     # Start Nym client first
     start_client()
 
