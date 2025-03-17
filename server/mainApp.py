@@ -27,6 +27,22 @@ def get_encryption_password():
     logger.error("Encryption password secret not found.")
     sys.exit(1)
 
+def initialize_nym_client():
+    """Checks if Nym client is already initialized, and initializes if necessary."""
+    nym_client_id = os.getenv("NYM_CLIENT_ID")
+    nym_client_dir = f"/root/.nym/clients/{nym_client_id}"
+
+    if os.path.exists(nym_client_dir):
+        logger.info("Existing Nym config found. Skipping init.")
+    else:
+        logger.info("No existing Nym config found. Initializing...")
+        command = ["./nym-client", "init", "--id", nym_client_id, "--host", "0.0.0.0"]
+        try:
+            subprocess.run(command, check=True)
+            logger.info("Nym client initialized successfully.")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to initialize Nym client: {e}")
+            sys.exit(1)
 
 def start_client():
     """Starts the `nym-client` process without using a shell."""
@@ -125,7 +141,8 @@ if __name__ == "__main__":
     # Register SIGTERM and SIGINT handlers for clean shutdown
     signal.signal(signal.SIGTERM, graceful_shutdown)
     signal.signal(signal.SIGINT, graceful_shutdown)
-
+    
+    initialize_nym_client()
     # Start Nym client first
     start_client()
 
