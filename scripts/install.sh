@@ -2,8 +2,6 @@
 set -e
 
 # Define URLs and directories
-
-CLIENT_ID=${NYM_CLIENT_ID:-"nymserver"}
 ENV_EXAMPLE="/app/.env.example"
 PASSWORD_FILE="/app/secrets/encryption_password"
 STORAGE_DIR="/app/storage"
@@ -243,21 +241,10 @@ build_nym_client() {
     rm -rf "$BUILD_DIR"
 }
 
-initialize_nym_client() {
-    local nym_client_dir="/root/.nym/clients/$NYM_CLIENT_ID"
-
-    if [ ! -d "$nym_client_dir" ]; then
-        echo "[INFO] No existing Nym config found. Initializing..."
-        /app/nym-client init --id "$NYM_CLIENT_ID" --host 0.0.0.0
-    else
-        echo "[INFO] Existing Nym config found. Skipping init."
-    fi
-}
-
 # Main execution flow
 log "INFO" "============================================================="
 log "INFO" "NYM CLIENT INSTALLATION AND CONFIGURATION"
-log "INFO" "Client ID: $CLIENT_ID"
+log "INFO" "Client ID: $NYM_CLIENT_ID"
 log "INFO" "============================================================="
 
 detect_os
@@ -272,11 +259,11 @@ if [[ "$ARCH" != "x86_64" && "$ARCH" != "x86" ]]; then
     log "INFO" "Forcing build from source due to architecture: $ARCH"
     install_rust
     build_nym_client
-    initialize_nym_client
+    # initialize_nym_client
 else
     log "INFO" "Using prebuilt binary for Linux ($ARCH)"
     install_binary
-    initialize_nym_client
+    # initialize_nym_client
 fi
 
 log "INFO" "[COMPLETE] Nym client installation & config successful"
