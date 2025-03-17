@@ -6,22 +6,26 @@ WORKDIR /app
 # Install system dependencies
 RUN apt-get update && apt-get install -y curl
 
-# Copy requirements.txt and install dependencies
-COPY requirements.txt /app/
+# Copy the requirements file and install dependencies
+COPY requirements.txt .
+
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the entire application source code into the container
-COPY . /app
+# Copy the required directories in one command
+COPY server/*.py server/
 
-# Make sure install.sh is executable
-RUN chmod +x scripts/install.sh
+COPY scripts/* scripts/
 
-RUN chmod +x scripts/entrypoint.sh
+COPY .env.example .env.example
 
-# Run install.sh inside Docker (automated setup, NO user input)
+COPY password.txt password.txt
+
+# Ensure the shell scripts are executable
+RUN chmod +x scripts/*.sh
+
+# Run the installation script
 RUN scripts/install.sh
 
+EXPOSE 1977
 # Set entrypoint to run the Nym client
 ENTRYPOINT ["scripts/entrypoint.sh"]
-
-# Start the main Python application

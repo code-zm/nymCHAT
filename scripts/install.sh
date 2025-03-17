@@ -4,11 +4,9 @@ set -e
 # Define URLs and directories
 
 CLIENT_ID=${NYM_CLIENT_ID:-"nymserver"}
-ENV_FILE=".env"
-ENV_EXAMPLE=".env.example"
-PASSWORD_FILE="secrets/encryption_password"
-HOST_PASSWORD_FILE="password.txt"  # Expected before copying
-STORAGE_DIR="storage"
+ENV_EXAMPLE="/app/.env.example"
+PASSWORD_FILE="/app/secrets/encryption_password"
+STORAGE_DIR="/app/storage"
 NYM_CONFIG_DIR="/root/.nym"
 BUILD_DIR="/tmp/nym-build"
 INSTALL_DIR="/app"
@@ -165,20 +163,17 @@ setup_encryption_password() {
     mkdir -p /app/secrets
     chmod 700 /app/secrets  # Restrict access to secrets directory
 
-    if [ -f "/app/password.txt" ]; then
-        log "INFO" "Copying provided password to secrets directory."
-        cp "/app/password.txt" "/app/secrets/encryption_password"
-    elif [ ! -f "/app/secrets/encryption_password" ]; then
-        log "WARN" "No password.txt found. Generating a secure password."
-        openssl rand -base64 32 > "/app/secrets/encryption_password"
-    else
-        log "INFO" "Encryption password already exists. Skipping setup."
+    if [ ! -f "/app/password.txt" ]; then
+        log "ERROR" "password.txt is missing! Please create it before running the install script."
+        exit 1
     fi
 
+    log "INFO" "Copying provided password to secrets directory."
+    cp "/app/password.txt" "/app/secrets/encryption_password"
     chmod 600 "/app/secrets/encryption_password"
+
     log "INFO" "Encryption password setup complete."
 }
-
 
 # Generate .env file from .env.example
 generate_env_file() {
@@ -195,38 +190,19 @@ generate_env_file() {
     log "INFO" "Copying .env.example to .env"
     cp "$ENV_EXAMPLE" "$ENV_FILE"
 
-    # First pass: Load NYM_CLIENT_ID early
-    while IFS='=' read -r key value || [ -n "$key" ]; do
-        if [[ "$key" == "NYM_CLIENT_ID" ]]; then
-            export NYM_CLIENT_ID="${!key:-$value}"
-        fi
-    done < "$ENV_EXAMPLE"
+    # Extract NYM_CLIENT_ID first
+    NYM_CLIENT_ID=$(grep '^NYM_CLIENT_ID=' "$ENV_EXAMPLE" | cut -d '=' -f 2-)
+    export NYM_CLIENT_ID
 
-    # Second pass: Replace values dynamically
-    while IFS='=' read -r key value || [ -n "$key" ]; do
-        echo "Checking key: $key"
+    log "INFO" "Using NYM_CLIENT_ID: $NYM_CLIENT_ID"
 
-        if [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
-            case "$key" in
-                DATABASE_PATH)
-                    value="storage/${NYM_CLIENT_ID}.db"
-                    ;;
-                SERVER_USERNAME)
-                    value="${NYM_CLIENT_ID}"
-                    ;;
-                *)
-                    value="${!key:-$value}"
-                    ;;
-            esac
-
-            echo "Replacing $key=$value"
-            sed -i "s|$key=.*|$key=$value|" "$ENV_FILE"
-        fi
-    done < "$ENV_EXAMPLE"
+    # Replace environment variables using envsubst
+    envsubst < "$ENV_EXAMPLE" > "$ENV_FILE"
 
     chmod 600 "$ENV_FILE"
     log "INFO" ".env file generated successfully."
 }
+
 
 
 # Install Rust if needed
@@ -267,6 +243,17 @@ build_nym_client() {
     rm -rf "$BUILD_DIR"
 }
 
+initialize_nym_client() {
+    local nym_client_dir="/root/.nym/clients/$NYM_CLIENT_ID"
+
+    if [ ! -d "$nym_client_dir" ]; then
+        echo "[INFO] No existing Nym config found. Initializing..."
+        /app/nym-client init --id "$NYM_CLIENT_ID" --host 0.0.0.0
+    else
+        echo "[INFO] Existing Nym config found. Skipping init."
+    fi
+}
+
 # Main execution flow
 log "INFO" "============================================================="
 log "INFO" "NYM CLIENT INSTALLATION AND CONFIGURATION"
@@ -285,9 +272,11 @@ if [[ "$ARCH" != "x86_64" && "$ARCH" != "x86" ]]; then
     log "INFO" "Forcing build from source due to architecture: $ARCH"
     install_rust
     build_nym_client
+    initialize_nym_client
 else
     log "INFO" "Using prebuilt binary for Linux ($ARCH)"
     install_binary
+    initialize_nym_client
 fi
 
-log "INFO" "[COMPLETE] Nym client installation successful"
+log "INFO" "[COMPLETE] Nym client installation & config successful"

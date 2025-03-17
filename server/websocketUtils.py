@@ -57,6 +57,17 @@ class WebsocketUtils:
         except Exception as e:
             logger.error(f"Error sending message: {e}")
 
+    async def close(self):
+        """Close the websocket connection."""
+        if self.websocket:
+            try:
+                await self.websocket.close()
+                logger.info("Websocket connection closed")
+            except Exception as e:
+                logger.error(f"Error closing connection: {e}")
+        else:
+            logger.warning("Websocket connection is not established")
+
     def set_message_callback(self, callback):
         """Set the callback function for processing received messages."""
         self.message_callback = callback

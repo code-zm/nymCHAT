@@ -1,7 +1,10 @@
 import asyncio
-import getpass
 import os
 import sys
+import time
+import signal
+import subprocess
+import threading
 from websocketUtils import WebsocketUtils
 from dbUtils import DbUtils
 from messageUtils import MessageUtils
@@ -11,6 +14,10 @@ from envLoader import load_env
 
 load_env()
 
+# Global variables
+client_process = None
+shutdown_event = threading.Event()  # Used for clean shutdown
+
 
 def get_encryption_password():
     secret_path = os.getenv("SECRET_PATH")
@@ -19,22 +26,76 @@ def get_encryption_password():
             return f.read().strip()
     logger.error("Encryption password secret not found.")
     sys.exit(1)
-        
+
+
+def start_client():
+    """Starts the `nym-client` process without using a shell."""
+    global client_process
+    try:
+        command = ["./nym-client", "run", "--id", os.getenv("NYM_CLIENT_ID")]
+        client_process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        logger.info("Nym client started successfully.")
+
+        # Wait for the client to initialize
+        time.sleep(5)  # Allow the client time to start up before proceeding
+
+    except Exception as e:
+        logger.error(f"Failed to start Nym client: {e}")
+        client_process = None
+
+
+def monitor_client():
+    """Monitors the Nym client output for errors and restarts if necessary."""
+    global client_process
+    while True:
+        if client_process is None or client_process.poll() is not None:
+            logger.error("Nym client crashed. Restarting in 10 seconds...")
+            time.sleep(10)
+            start_client()
+            continue
+
+        try:
+            # Read output from stdout and stderr
+            stdout, stderr = client_process.communicate(timeout=60)
+            output = (stdout + stderr).decode()
+
+            # Check if there's any error (any occurrence of "ERROR")
+            if "ERROR" in output:
+                logger.error(f"Error detected in client output: {output}")
+                client_process.terminate()  # Restart on error
+                time.sleep(2)  # Short wait before restarting
+        except subprocess.TimeoutExpired:
+            logger.info("Nym client is still running, no issues detected.")
+        except Exception as e:
+            logger.error(f"Unhandled error while monitoring Nym client: {e}")
+
+
+
+def graceful_shutdown(signal_received, frame):
+    """Handles shutdown signals (SIGINT & SIGTERM) to terminate processes cleanly."""
+    logger.info("Graceful shutdown initiated. Sending Ctrl+C to Nym client...")
+    shutdown_event.set()  # Signal the monitoring thread to stop
+
+    if client_process is not None:
+        client_process.send_signal(signal.SIGINT)  # Send SIGINT (Ctrl+C)
+        logger.info("Waiting 5 seconds for Nym client to shut down gracefully...")
+        time.sleep(5)  # Give it time to handle cleanup
+        logger.info("Nym client shutdown complete.")
+
+    sys.exit(0)
+
+
 async def main():
-    # Securely prompt for the key encryption password
+    """Main asynchronous function handling WebSocket communication."""
     password = get_encryption_password()
-    
-    # Ensure all necessary environment variables are loaded
+
     websocket_url = os.getenv("WEBSOCKET_URL")
     db_path = os.getenv("DATABASE_PATH", "storage/nym_server.db")
     key_dir = os.getenv("KEYS_DIR", "storage/keys")
 
-    # Initialize cryptography utility
     cryptography_utils = CryptoUtils(key_dir, password)
-      # Now, initialize database manager with encryption
     database_manager = DbUtils(db_path, cryptography_utils)
 
-    # Initialize WebSocket manager and message handler
     websocket_manager = WebsocketUtils(websocket_url)
     message_handler = MessageUtils(websocket_manager, database_manager, cryptography_utils, password)
 
@@ -45,12 +106,11 @@ async def main():
         await websocket_manager.connect()
         logger.info("Waiting for incoming messages...")
 
-        while True:
+        while not shutdown_event.is_set():
             await asyncio.sleep(1)  # Prevent busy-waiting
 
     except asyncio.CancelledError:
         logger.info("Main coroutine was cancelled.")
-        raise
     except KeyboardInterrupt:
         logger.info("Received KeyboardInterrupt. Closing gracefully...")
     except Exception as e:
@@ -60,9 +120,21 @@ async def main():
         await websocket_manager.close()
         database_manager.close()
 
+
 if __name__ == "__main__":
+    # Register SIGTERM and SIGINT handlers for clean shutdown
+    signal.signal(signal.SIGTERM, graceful_shutdown)
+    signal.signal(signal.SIGINT, graceful_shutdown)
+
+    # Start Nym client first
+    start_client()
+
+    # Start monitoring the Nym client in a separate thread
+    threading.Thread(target=monitor_client, daemon=True).start()
+
+    # Start the async WebSocket server
     try:
-        asyncio.run(main())
+        asyncio.run(main())  # Run the main async function
     except KeyboardInterrupt:
         logger.info("Application interrupted by user.")
     except asyncio.CancelledError:
