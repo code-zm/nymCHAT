@@ -110,7 +110,7 @@ async def main():
     key_dir = os.getenv("KEYS_DIR", "storage/keys")
 
     cryptography_utils = CryptoUtils(key_dir, password)
-    database_manager = DbUtils(db_path, cryptography_utils)
+    database_manager = DbUtils(db_path)
 
     websocket_manager = WebsocketUtils(websocket_url)
     message_handler = MessageUtils(websocket_manager, database_manager, cryptography_utils, password)
