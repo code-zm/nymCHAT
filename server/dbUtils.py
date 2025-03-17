@@ -3,19 +3,17 @@ import json
 import os
 from logConfig import logger
 from envLoader import load_env
-from cryptographyUtils import CryptoUtils
 
 load_env()
 
 class DbUtils:
-    def __init__(self, dbPath, crypto_utils):
+    def __init__(self, dbPath):
         self.dbPath = os.getenv("DATABASE_PATH")
-        self.crypto_utils = crypto_utils  # Store CryptoUtils instance
 
         if not os.path.exists(dbPath):
-            logger.info("dbInit - Initializing new database")
+            logger.info(f"Initializing new database at {dbPath}.")
         else:
-            logger.info("dbInit - Using existing database")
+            logger.info(f"Using existing database at {dbPath}.")
 
         self.connection = sqlite3.connect(dbPath, check_same_thread=False)
         self.cursor = self.connection.cursor()
@@ -40,76 +38,51 @@ class DbUtils:
 
     def addUser(self, username, publicKey, senderTag):
         try:
-            encrypted_publicKey = self.crypto_utils._encrypt_data(publicKey.encode())  # Encrypt
-            encrypted_senderTag = self.crypto_utils._encrypt_data(senderTag.encode())  # Encrypt
-
             self.cursor.execute(
                 "INSERT INTO users (username, publicKey, senderTag) VALUES (?, ?, ?)",
-                (username, encrypted_publicKey, encrypted_senderTag),
+                (username, publicKey, senderTag),
             )
             self.connection.commit()
-            logger.info("addUser successful!")
+            logger.info(f"User {username} added successfully.")
         except sqlite3.IntegrityError as e:
-            logger.error(f"addUser error: {e}")
+            logger.error(f"Error adding user {username}: {e}")
             return False
         return True
 
     def getUserByUsername(self, username):
         self.cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
-        result = self.cursor.fetchone()
-        if result:
-            decrypted_publicKey = self.crypto_utils._decrypt_data(result[1])  # Decrypt
-            decrypted_senderTag = self.crypto_utils._decrypt_data(result[2])  # Decrypt
-            logger.info("getUserByUsername - success")
-            return (result[0], decrypted_publicKey, decrypted_senderTag)
-        return None
+        return self.cursor.fetchone()
 
     def getUserBySenderTag(self, senderTag):
         self.cursor.execute("SELECT * FROM users WHERE senderTag = ?", (senderTag,))
-        result = self.cursor.fetchone()
-        if result:
-            decrypted_publicKey = self.crypto_utils._decrypt_data(result[1])  # Decrypt
-            decrypted_senderTag = self.crypto_utils._decrypt_data(result[2])  # Decrypt
-            logger.info("getUserBySenderTag - success!")
-            return (result[0], decrypted_publicKey, decrypted_senderTag)  # Return decrypted data
-        return None
+        return self.cursor.fetchone()
 
     def updateUserField(self, username, field, value):
-        allowed_fields = ["publicKey", "senderTag"]  # Only allow updates to these fields
-        if field not in allowed_fields:
-            logger.error(f"updateUserField - Invalid field update attempt: {field}")
-            return False
-
         try:
             self.cursor.execute(f"UPDATE users SET {field} = ? WHERE username = ?", (value, username))
             self.connection.commit()
-            logger.info("updaterUserField - success!")
+            logger.info(f"User {username} field {field} updated")
+            return True
         except sqlite3.Error as e:
-            logger.error(f"updateUserField - Error updating user: {e}")
+            logger.error(f"Error updating user {username} field {field}: {e}")
+            return False
+
+    def addGroup(self, groupId, initialUsers):
+        try:
+            self.cursor.execute(
+                "INSERT INTO groups (groupID, userList) VALUES (?, ?)",
+                (groupId, json.dumps(initialUsers)),
+            )
+            self.connection.commit()
+            logger.info(f"Group {groupId} added successfully.")
+        except sqlite3.IntegrityError as e:
+            logger.error(f"Error adding group {groupId}: {e}")
             return False
         return True
 
-    # def addGroup(self, groupId, initialUsers):
-    #     try:
-    #         encrypted_userList = self.crypto_utils._encrypt_data(json.dumps(initialUsers).encode())  # Encrypt
-    #         self.cursor.execute(
-    #             "INSERT INTO groups (groupID, userList) VALUES (?, ?)",
-    #             (groupId, encrypted_userList),
-    #         )
-    #         self.connection.commit()
-    #         logger.info(f"Group {groupId} added successfully.")
-    #     except sqlite3.IntegrityError as e:
-    #         logger.error(f"Error adding group {groupId}: {e}")
-    #         return False
-    #     return True
-
-    # def getGroup(self, groupId):
-    #     self.cursor.execute("SELECT * FROM groups WHERE groupID = ?", (groupId,))
-    #     result = self.cursor.fetchone()
-    #     if result:
-    #         decrypted_userList = self.crypto_utils._decrypt_data(result[1])  # Decrypt
-    #         return (result[0], json.loads(decrypted_userList))  # Return decrypted data
-    #     return None
+    def getGroup(self, groupId):
+        self.cursor.execute("SELECT * FROM groups WHERE groupID = ?", (groupId,))
+        return self.cursor.fetchone()
 
     def close(self):
         logger.info("Closing database connection.")
