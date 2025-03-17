@@ -4,7 +4,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y curl
+RUN apt-get update && apt-get install -y curl gettext
 
 # Copy the requirements file and install dependencies
 COPY requirements.txt .
