@@ -6,29 +6,26 @@ WORKDIR /app
 # Install system dependencies
 RUN apt-get update && apt-get install -y curl
 
-# Copy requirements.txt and install dependencies
-COPY requirements.txt /app/
+# Copy the requirements file and install dependencies
+COPY requirements.txt .
+
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the entire application source code into the container
-COPY . /app
+# Copy the required directories in one command
+COPY server/*.py server/
 
-# Ensure `password.txt` is available inside the container
-COPY password.txt /app/password.txt
+COPY scripts/* scripts/
 
-# Make sure install.sh is executable
-RUN chmod +x scripts/install.sh
+COPY .env.example .env.example
 
-# Run install.sh inside Docker (automated setup, NO user input)
-RUN /app/scripts/install.sh
+COPY password.txt password.txt
 
-COPY scripts/entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+# Ensure the shell scripts are executable
+RUN chmod +x scripts/*.sh
 
-# Expose WebSocket port used by the Nym client
+# Run the installation script
+RUN scripts/install.sh
+
 EXPOSE 1977
-
 # Set entrypoint to run the Nym client
-ENTRYPOINT ["/app/entrypoint.sh"]
-
-# Start the main Python application
+ENTRYPOINT ["scripts/entrypoint.sh"]
