@@ -1,7 +1,7 @@
-# Use an official Python image as a base
-FROM python:3.11-slim
+# Stage 1: Build Stage
+FROM python:3.11-slim AS builder
 
-# Install system dependencies required for building native extensions and Rust
+# Install build dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
     libssl-dev \
@@ -9,27 +9,43 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Set the working directory in the container
 WORKDIR /app
 
-# Copy requirements.txt and build.sh into the container
-COPY requirements.txt build.sh ./
+# Copy the build script and Rust project files
+COPY build.sh .
+COPY async_ffi/ async_ffi/
+COPY requirements.txt .
 
-# Copy only the required project directories and files
-COPY client/ client/
-COPY storage/ storage/
-COPY async_ffi/Cargo.toml async_ffi/
-COPY async_ffi/Cargo.lock async_ffi/
-COPY async_ffi/src/ async_ffi/src/
-
-# Ensure the build script is executable
+# Make sure build.sh is executable
 RUN chmod +x build.sh
 
-# Run the build script to install dependencies, Rust (if needed), and build the Rust extension
+# Run the build script to install Rust (if needed) and build the wheel
 RUN ./build.sh
 
-# Expose the port if your application listens on a specific port (adjust if necessary)
+# Copy the built wheel to a dedicated folder for later retrieval
+RUN mkdir /wheel && cp async_ffi/target/wheels/*.whl /wheel/
+
+# Stage 2: Final (runtime) Stage
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy only the files needed at runtime
+COPY requirements.txt ./
+COPY client/ client/
+COPY storage/ storage/
+
+# Copy the pre-built wheel from the builder stage
+COPY --from=builder /wheel/ /wheel/
+
+# Install runtime Python dependencies and the built wheel
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir /wheel/*.whl && \
+    rm -rf /wheel
+
+# Expose the port your application uses
 EXPOSE 8080
 
-# Launch the client application directly
-CMD ["python", "src/runClient.py"]
+# Launch the application
+CMD ["python", "client/runClient.py"]
+
