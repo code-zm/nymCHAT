@@ -6,8 +6,14 @@ A privacy focused messaging app powered by the Nym Mixnet. The repo is divided i
 
 ## Overview
 
-Users register a public key and username with a discovery node. The discovery node provides lookup & message relaying. Nodes maintain a database mapping each username to its corresponding public key and a `senderTag`. Sender tags are random strings derived from received SURBs. Single Use Reply Blocks (SURBs) allow the server to forward messages to clients without ever knowing the destination of the message. Initially, messages are routed through the discovery node; however, clients can exchange an encrypted handshake to enable direct client-to-client communication for an extra layer of privacy.
-Looking through this codebase, I can see you've built a privacy-focused messaging system leveraging the Nym mixnet with a two-component architecture: a client application and a discovery node server. The current documentation lacks clear deployment paths, so I'll add the necessary content to the README.md.
+Users register a public key and username with a discovery node. The discovery node provides lookup & message relaying. Nodes maintain a database mapping each username to its corresponding public key and a `senderTag`. 
+
+Sender tags are random strings derived from received SURBs. Single Use Reply Blocks (SURBs) allow the server to forward messages to clients without ever knowing the destination of the message. 
+
+Initially, messages are routed through the discovery node; however, clients can exchange an encrypted handshake to enable direct client-to-client communication for an extra layer of privacy.
+
+
+We've built a privacy-focused messaging system leveraging the Nym mixnet with a two-component architecture: a client application and a discovery node server.
 
 ## Quickstart 
 
@@ -120,13 +126,95 @@ nymCHAT implements a pseudonymous message routing system with two key components
    - `secrets`: Secures encryption passwords
 
 3. **Port Exposure**: Exposes port 1977 for WebSocket communication with the Nym client.
+   *note: this is needed to expose only locally as a part of the whole dev environment and is not intended for production. It is not needed to expose it in general. We are mapping it to the same network as the client container so it works for the purposes of testing. More on that later.*
 
 4. **Health Monitoring**: Implements a health check to verify service operation.
 
-For full deployment, you should add this file to your repository and update your documentation to reference it. This approach isolates the server component while maintaining the persistent state needed for the discovery node to function properly.
-
-The client component was intentionally excluded from the Docker setup as it's a GUI application that users would typically run locally rather than in a container.
 ---
+
+## Docker Compose Deployment Architecture
+
+In this section we will cover the honky-tonky containerization of our current application. 
+Prepare for a deep-dive into the world of 1337. 
+
+It should also cover the some issues you might encounter during the setup, so we also added a Troubleshooting section.
+
+
+### High-level overview 
+
+Our Docker Compose configuration establishes a seamless deployment of both the server and client components with appropriate isolation and communication channels.
+
+### Network and Service Communication
+
+The deployment uses a bridge network (`nym_network`) to isolate the application's internal communication. The critical connection flow works as follows:
+
+1. The server initializes a Nym client and writes its address to `/app/shared/nym_address.txt`
+2. The client container waits for this file to appear, then reads the server's address
+3. This address is used by the client to establish a connection to the discovery node
+
+### Volume Structure and Data Sharing
+
+The architecture leverages Docker volumes for persistence and inter-service communication:
+
+- `server_data`: Stores server-specific data (SQLite DB and encryption keys)
+- `nym_client_data`/`client_nym_data`: Separate Nym identities for server and client 
+- `client_data`: Client-specific storage for local databases
+- `address_data`: Critical shared volume mounted at `/app/shared` in both containers
+
+The shared address volume creates a simple yet effective communication channel between containers without exposing sensitive information through environment variables or command-line arguments.
+
+### Troubleshooting Container Networking
+
+If you experience networking issues between containers:
+
+1. Test basic connectivity using Netcat:
+   ```bash
+   # Test if ports are reachable on your host machine (old h4x0r  way)
+   ncat localhost 1977 -v # this should show you some open socket, if you see connx timed out, something is wrong.
+   ncat localhost 8080 -v # if the webUI is working, you should get the same result. 
+   HEAD / HTTP/1.1 # smash enter until server responds 
+   # Install netcat in a container if needed
+   docker-compose exec server apk add --no-cache netcat-openbsd
+   
+   # From server, verify client is reachable (replace PORT with the internal port)
+   docker-compose exec server nc -zv client PORT
+   
+   # From client, verify server is reachable
+   docker-compose exec client nc -zv server 2000
+   ```
+
+2. Verify the shared address file exists:
+   ```bash
+   docker-compose exec server cat /app/shared/nym_address.txt
+   docker-compose exec client cat /app/shared/nym_address.txt
+   ```
+
+3. Check container logs for specific errors:
+   ```bash
+   docker-compose logs server
+   docker-compose logs client
+   ```
+
+4. Verify volume mounts are working correctly:
+   ```bash
+   docker-compose exec server ls -la /app/shared
+   docker-compose exec client ls -la /app/shared
+   ```
+
+### Container Startup Sequence
+
+The containers follow a specific startup sequence:
+
+1. `server-init` creates the necessary storage structure and encryption password
+2. `server` starts and initializes its Nym client, writing the address to the shared volume
+3. The `client` container waits until the server health check passes (address file exists)
+4. The client reads the server address and establishes connection to the mixnet
+
+**This orchestrated startup ensures the client always has the correct server address before attempting connection.**
+
+Hopefully, this explanation can explain everything you need to know about the details on how the networking architecture works, why volumes are shared between containers, and how to troubleshoot common issues. 
+
+The key *innovation* in this setup is using a **shared volume** as a **communication channel for the server's Nym address, which allows the client to connect to the correct discovery node**_ **without hardcoding addresses.**_
 
 ## Protocol
 
