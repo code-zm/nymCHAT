@@ -23,7 +23,7 @@ Prerequisites
 1.  Clone this repository and navigate to the directory:
 ```
 git clone https://github.com/code-zm/nymCHAT.git
-cd nymChat
+cd client
 ```
 
 2. Create & activate python virtual environment
@@ -46,7 +46,7 @@ maturin build # build the .whl
 
 5. Install the FFI library
 ```
-pip install target/wheels/async_ffi*.whl
+pip install target/wheels/*.whl
 ```
 
 ---

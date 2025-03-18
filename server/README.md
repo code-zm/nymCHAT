@@ -11,22 +11,21 @@ A discovery / remailer service used by nymCHAT clients.
 Download the project to your local machine:
 ```sh
 git clone https://github.com/code-zm/nymCHAT.git
-cd nymCHAT/nymDirectory
+cd nymCHAT/server
 ```
 
 #### Step 2: Configuration
-Before we build the Docker image, we have setup some config files.
+Before we build the Docker image, we have to do some setup.
 First, Create the `.env` file:
 ```sh
 cp .env.example .env
 ```
 
-*Note: if you use a custom `NYM_CLIENT_ID`, make sure you set all env vars to match it.*
+*Note: no changes are necessary, simply copying is fine. If you want your nym-client itself to have a custom name, set NYM_CLIENT_ID*
 
-Next, setup your encryption password. This will be used to "unlock" your keys. 
+Next, setup your encryption password. This will be used to unlock your keys. 
 ```sh
 echo "your-secure-password" > password.txt
-chmod 600 password.txt
 ```
 
 #### Step 3. Build the Docker Image
