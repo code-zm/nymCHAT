@@ -14,6 +14,14 @@ from envLoader import load_env
 
 load_env()
 
+# Ensure all required directories exist
+storage_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "storage")
+os.makedirs(storage_dir, exist_ok=True)
+keys_dir = os.getenv("KEYS_DIR", "storage/keys")
+os.makedirs(keys_dir, exist_ok=True)
+logs_dir = os.path.dirname(os.getenv("LOG_FILE", "storage/app.log"))
+os.makedirs(logs_dir, exist_ok=True)
+
 # Global variables
 client_process = None
 shutdown_event = threading.Event()  # Used for clean shutdown
@@ -36,7 +44,7 @@ def initialize_nym_client():
         logger.info("Existing Nym config found. Skipping init.")
     else:
         logger.info("No existing Nym config found. Initializing...")
-        command = ["./nym-client", "init", "--id", nym_client_id, "--host", "0.0.0.0", "--port", "2000"]
+        command = ["./nym-client", "init", "--id", nym_client_id, "--host", "0.0.0.0"]
         try:
             subprocess.run(command, check=True)
             logger.info("Nym client initialized successfully.")
@@ -63,7 +71,7 @@ def start_client():
 def monitor_client():
     """Monitors the Nym client output for errors and restarts if necessary."""
     global client_process
-    while True:
+    while not shutdown_event.is_set():
         if client_process is None or client_process.poll() is not None:
             logger.error("Nym client crashed. Restarting in 10 seconds...")
             time.sleep(10)
@@ -109,6 +117,9 @@ async def main():
     db_path = os.getenv("DATABASE_PATH", "storage/nym_server.db")
     key_dir = os.getenv("KEYS_DIR", "storage/keys")
 
+    # Ensure db directory exists
+    os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+
     cryptography_utils = CryptoUtils(key_dir, password)
     database_manager = DbUtils(db_path)
 
@@ -124,6 +135,16 @@ async def main():
 
         while not shutdown_event.is_set():
             await asyncio.sleep(1)  # Prevent busy-waiting
+            
+        # Get Nym address from websocket manager and save to file
+        nym_address = await websocket_manager.get_self_address()  
+        if nym_address:
+            address_file_path = os.path.join(os.path.dirname(os.path.abspath(db_path)), "server_address.txt")
+            with open(address_file_path, "w") as f:
+                f.write(nym_address)
+            logger.info(f"Saved Nym address to {address_file_path}: {nym_address}")
+        else:
+            logger.error("Failed to get Nym address from WebSocket connection")
 
     except asyncio.CancelledError:
         logger.info("Main coroutine was cancelled.")
@@ -148,7 +169,8 @@ if __name__ == "__main__":
     start_client()
 
     # Start monitoring the Nym client in a separate thread
-    threading.Thread(target=monitor_client, daemon=True).start()
+    monitoring_thread = threading.Thread(target=monitor_client, daemon=True)
+    monitoring_thread.start()
 
     # Start the async WebSocket server
     try:
