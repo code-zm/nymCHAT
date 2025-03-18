@@ -31,7 +31,7 @@ pip install --no-cache-dir -r requirements.txt
 # Build the Rust extension using maturin
 log "INFO" "Building Rust extension..."
 cd async_ffi
-maturin build
+maturin build --release
 
 # Install the built wheel
 log "INFO" "Installing the built wheel..."
