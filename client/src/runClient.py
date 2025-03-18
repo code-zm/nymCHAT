@@ -415,4 +415,4 @@ def on_shutdown():
         t.join()  # Wait for shutdown to complete
         logger.info("Mixnet client shutdown complete.")
         
-ui.run(dark=True, host='127.0.0.1', title="NymCHAT")
+ui.run(dark=True, host='0.0.0.0', title="NymCHAT")
