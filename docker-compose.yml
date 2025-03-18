@@ -35,7 +35,7 @@ services:
       - SECRET_PATH=/app/storage/encryption_password.txt
       - NYM_CLIENT_ID=nym_server
     ports:
-      - "2000:2000"
+      - "1977:1977"
     logging: *logging
     healthcheck:
       test: test -f /app/shared/nym_address.txt
