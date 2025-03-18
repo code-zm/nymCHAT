@@ -26,6 +26,6 @@ RUN chmod +x scripts/*.sh
 # Run the installation script
 RUN scripts/install.sh
 
-EXPOSE 2000
+EXPOSE 1977
 # Set entrypoint to run the Nym client
 ENTRYPOINT ["scripts/entrypoint.sh"]
