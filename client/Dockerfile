@@ -47,5 +47,5 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 EXPOSE 8080
 
 # Launch the application
-CMD ["python", "client/runClient.py"]
+CMD ["python", "src/runClient.py"]
 
