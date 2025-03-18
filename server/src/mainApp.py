@@ -36,7 +36,7 @@ def initialize_nym_client():
         logger.info("Existing Nym config found. Skipping init.")
     else:
         logger.info("No existing Nym config found. Initializing...")
-        command = ["./nym-client", "init", "--id", nym_client_id, "--host", "0.0.0.0"]
+        command = ["./nym-client", "init", "--id", nym_client_id, "--host", "0.0.0.0", "--port", "2000"]
         try:
             subprocess.run(command, check=True)
             logger.info("Nym client initialized successfully.")

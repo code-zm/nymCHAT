@@ -35,7 +35,7 @@ services:
       - SECRET_PATH=/app/storage/encryption_password.txt
       - NYM_CLIENT_ID=nym_server
     ports:
-      - "1977:1977"
+      - "2000:2000"
     logging: *logging
     healthcheck:
       test: test -f /app/shared/nym_address.txt
@@ -70,7 +70,7 @@ services:
         echo "Using SERVER_ADDRESS: $SERVER_ADDRESS"
         export SERVER_ADDRESS
         
-        exec python client/runClient.py
+        exec python src/runClient.py
       '
     logging: *logging
 
