@@ -32,4 +32,4 @@ RUN ./build.sh
 EXPOSE 8080
 
 # Launch the client application directly
-CMD ["python", "client/runClient.py"]
+CMD ["python", "src/runClient.py"]

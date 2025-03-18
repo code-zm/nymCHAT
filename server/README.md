@@ -2,10 +2,10 @@
 A discovery / remailer service used by nymCHAT clients. 
 
 ## Installation
+
 **Prerequisities**
 1. Git - to clone the repo
-2. Docker - to run in everything in container
-3. Rust- only needed if not on linux, you will have to build the nym-client from source. 
+2. Docker - to run in everything in container 
 
 #### Step 1: Clone the Repo
 Download the project to your local machine:
