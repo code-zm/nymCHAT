@@ -15,7 +15,7 @@ cd nymCHAT/server
 ```
 
 #### Step 2: Configuration
-Before we build the Docker image, we have to setup the environment variables.
+Before we build the Docker image, we have to do some setup.
 First, Create the `.env` file:
 ```sh
 cp .env.example .env
