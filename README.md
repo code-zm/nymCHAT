@@ -6,7 +6,12 @@ A privacy focused messaging app powered by the Nym Mixnet. The repo is divided i
 
 ## Overview
 
-Users register a public key and username with a discovery node. The discovery node provides lookup & message relaying. Nodes maintain a database mapping each username to its corresponding public key and a `senderTag`. Sender tags are random strings derived from received SURBs. Single Use Reply Blocks (SURBs) allow the server to forward messages to clients without ever knowing the destination of the message. Initially, messages are routed through the discovery node; however, clients can exchange an encrypted handshake to enable direct client-to-client communication for an extra layer of privacy.
+1. Users register a public key and username with a discovery node.
+2. The discovery node provides lookup & message relaying.
+3. Nodes maintain a database mapping each username to its corresponding public key and a `senderTag`.
+4. Sender tags are random strings derived from received SURBs.
+5. Single Use Reply Blocks (SURBs) allow the server to forward messages to clients without ever knowing the destination of the message.
+6. Initially, messages are routed through the discovery node; _however_, **clients can exchange an encrypted handshake** to enable direct **client-to-client communication for an extra layer of privacy.**
 
 ---
 
