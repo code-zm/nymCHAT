@@ -32,7 +32,7 @@ WORKDIR /app
 
 # Copy only the files needed at runtime
 COPY requirements.txt ./
-COPY client/ client/
+COPY src/ src/
 COPY storage/ storage/
 
 # Copy the pre-built wheel from the builder stage
