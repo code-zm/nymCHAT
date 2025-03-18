@@ -12,7 +12,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the required directories in one command
-COPY server/*.py server/
+COPY src/*.py server/
 
 COPY scripts/* scripts/
 
@@ -21,10 +21,10 @@ COPY .env.example .env.example
 COPY password.txt password.txt
 
 # Ensure the shell scripts are executable
-RUN chmod +x scripts/*.sh
+RUN chmod +x scripts/*.sh && scripts/install.sh
 
 # Run the installation script
-RUN scripts/install.sh
+#RUN scripts/install.sh
 
 EXPOSE 1977
 # Set entrypoint to run the Nym client
