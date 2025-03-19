@@ -14,6 +14,14 @@ from envLoader import load_env
 
 load_env()
 
+# Ensure all required directories exist
+storage_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "storage")
+os.makedirs(storage_dir, exist_ok=True)
+keys_dir = os.getenv("KEYS_DIR", "storage/keys")
+os.makedirs(keys_dir, exist_ok=True)
+logs_dir = os.path.dirname(os.getenv("LOG_FILE", "storage/app.log"))
+os.makedirs(logs_dir, exist_ok=True)
+
 # Global variables
 client_process = None
 shutdown_event = threading.Event()  # Used for clean shutdown
@@ -36,7 +44,7 @@ def initialize_nym_client():
         logger.info("Existing Nym config found. Skipping init.")
     else:
         logger.info("No existing Nym config found. Initializing...")
-        command = ["./nym-client", "init", "--id", nym_client_id, "--host", "0.0.0.0"]
+        command = ["./nym-client", "init", "--id", nym_client_id]
         try:
             subprocess.run(command, check=True)
             logger.info("Nym client initialized successfully.")
