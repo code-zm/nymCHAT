@@ -1,7 +1,6 @@
 ` ### IN PROGRESS ### `
 
 TLDR:
-Based on the Pudding Protocol: https://arxiv.org/abs/2311.10825
 - Implements a “discovery node” service that stores `(username → (public_key, senderTag))`.
 - Discovery nodes challenge any new registration with a random nonce. The prospective user signs that nonce with their “username key.”
 - For lookups, the discovery node queries its DB for a given `username`, if found it returns `username_pk`, else `e`
@@ -36,7 +35,7 @@ Based on the Pudding Protocol: https://arxiv.org/abs/2311.10825
     - On registration, a node demands proof of ownership.
     - On lookup, the node either:
         - Returns the associated `username_pk`
-        - Returns an `error`
+        - Returns an `error` message
 3. **Nym Mixnet**
     - Provides packet routing via the mix nodes & gateway nodes, using the standard Sphinx packet layering.
     - Mixnet traffic is fully asynchronous; the user device can be offline, and the associated gateway will buffer messages.
