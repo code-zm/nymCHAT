@@ -1,7 +1,9 @@
+# server/src/messageUtils.py with Redis integration
 import json
 import secrets
 import os
 import re
+import time
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
@@ -16,13 +18,14 @@ class MessageUtils:
     NONCES = {}  # Temporary storage for nonces
     PENDING_USERS = {}  # Temporary storage for user details during registration
 
-    def __init__(self, websocketManager, databaseManager, crypto_utils, password):
+    def __init__(self, websocketManager, databaseManager, crypto_utils, password, redis_manager=None):
         NYM_CLIENT_ID = os.getenv("NYM_CLIENT_ID")
         SERVER_KEY_PATH = os.getenv("KEYS_DIR")
 
         self.websocketManager = websocketManager
         self.databaseManager = databaseManager
         self.cryptoUtils = CryptoUtils(SERVER_KEY_PATH, password)
+        self.redis_manager = redis_manager  # Add Redis manager
 
         private_key_path = os.path.join(os.getenv("KEYS_DIR"), f"{NYM_CLIENT_ID}_private_key.enc")
 
@@ -72,6 +75,8 @@ class MessageUtils:
                 await self.handleSendInvite(encapsulatedData, senderTag)
             elif action == "loginResponse":
                 await self.handleLoginResponse(encapsulatedData, senderTag)
+            elif action == "presenceUpdate":
+                await self.handlePresenceUpdate(encapsulatedData, senderTag)
             else:
                 logger.error(f"processReceivedMessage - Unknown encapsulated action :( | {action}")
         except json.JSONDecodeError as e:
@@ -185,6 +190,18 @@ class MessageUtils:
             context="chat"
         )
 
+        # Publish notification to Redis if available
+        if self.redis_manager and self.redis_manager.connection_status == "connected":
+            notification = {
+                "type": "new_message",
+                "sender": sender_username,
+                "recipient": recipient_username,
+                "timestamp": time.time(),
+            }
+            channel = f"notifications:{recipient_username}"
+            await self.redis_manager.publish(channel, notification)
+            logger.info(f"Published message notification to {channel}")
+
         # Confirm success to the sender.
         await self.sendEncapsulatedReply(
             senderTag,
@@ -192,105 +209,6 @@ class MessageUtils:
             action="sendResponse",
             context="chat"
         )
-
-    async def handleQuery(self, messageData, senderTag):
-        """
-        Handle a user discovery query:
-          - The client sends a 'username' field to look up.
-          - We return either the user details (username and publicKey) 
-            or "No user found".
-        Example incoming data:
-        {
-          "action": "query",
-          "username": "<some_username>"
-        }
-        """
-        target_username = messageData.get("username")
-        if not target_username:
-            # If 'username' is missing, let the client know
-            await self.sendEncapsulatedReply(
-                senderTag,
-                "error: missing 'username' field",
-                action="queryResponse",
-                context="query"
-            )
-            logger.warning("handleQuery - missing username field :(")
-            return
-
-        # Look up the user record in the DB
-        user = self.databaseManager.getUserByUsername(target_username)
-        if user:
-            # Depending on your schema, user might be (username, publicKey, senderTag, ...)
-            # We'll just extract the first two.
-            username, publicKey = user[0], user[1]
-
-            # Only return the username and publicKey
-            user_data = {
-                "username": username,
-                "publicKey": publicKey
-            }
-
-            await self.sendEncapsulatedReply(
-                senderTag,
-                json.dumps(user_data),
-                action="queryResponse",
-                context="query"
-            )
-        else:
-            # No user found
-            await self.sendEncapsulatedReply(
-                senderTag,
-                "No user found",
-                action="queryResponse",
-                context="query"
-            )
-
-    async def handleRegister(self, messageData, senderTag):
-        username = messageData.get("usernym")
-        publicKey = messageData.get("publicKey")
-
-        if not username or not publicKey:
-            await self.sendEncapsulatedReply(senderTag, "error: missing username or public key", action="challengeResponse", context="registration")
-            return
-
-        if not MessageUtils.is_valid_username(username):
-            await self.sendEncapsulatedReply(senderTag, "error: invalid username format", action="challengeResponse", context="registration")
-            return
-
-        if self.databaseManager.getUserByUsername(username):
-            await self.sendEncapsulatedReply(senderTag, "error: username already in use", action="challengeResponse", context="registration")
-            return
-
-        # Generate a nonce and store it in PENDING_USERS
-        nonce = secrets.token_hex(16)
-        self.PENDING_USERS[senderTag] = (username, publicKey, nonce)
-        logger.info("handleRegister - sending challenge")
-        # Send the challenge to the client
-        await self.sendEncapsulatedReply(senderTag, json.dumps({"nonce": nonce}), action="challenge", context="registration")
-
-    async def handleRegistrationResponse(self, messageData, senderTag):
-        signature = messageData.get("signature")
-        user_details = self.PENDING_USERS.get(senderTag)
-
-        if not user_details:
-            await self.sendEncapsulatedReply(senderTag, "error: no pending registration for sender", action="challengeResponse", context="registration")
-            logger.warning("handleRegistrationResponse - no pending registration for sender :(")
-            return
-
-        username, publicKey, nonce = user_details
-
-        # Verify the signature
-        if self.cryptoUtils.verify_signature(publicKey, nonce, signature):
-            if self.databaseManager.addUser(username, publicKey, senderTag):
-                await self.sendEncapsulatedReply(senderTag, "success", action="challengeResponse", context="registration")
-                del self.PENDING_USERS[senderTag]  # Clean up after successful registration
-                logger.info("handleRegistrationResponse - registration successful")
-            else:
-                await self.sendEncapsulatedReply(senderTag, "error: database failure", action="challengeResponse", context="registration")
-        else:
-            await self.sendEncapsulatedReply(senderTag, "error: signature verification failed", action="challengeResponse", context="registration")
-            del self.PENDING_USERS[senderTag]  # Clean up after failed verification
-            logger.warning("handleRegistrationResponse - registration failed :(")
 
     async def handleLogin(self, messageData, senderTag):
         """
@@ -347,6 +265,20 @@ class MessageUtils:
                 if dbSenderTag != senderTag:
                     self.databaseManager.updateUserField(username, "senderTag", senderTag)
 
+            # Set user as online in Redis if available
+            if self.redis_manager and self.redis_manager.connection_status == "connected":
+                await self.redis_manager.set_presence(username, "online", expiry=300)
+                
+                # Notify other users that this user is online
+                notification = {
+                    "type": "presence_update",
+                    "username": username,
+                    "status": "online",
+                    "timestamp": time.time()
+                }
+                await self.redis_manager.publish("presence_updates", notification)
+                logger.info(f"Published presence update for {username}: online")
+
             await self.sendEncapsulatedReply(
                 senderTag,
                 "success",
@@ -364,6 +296,74 @@ class MessageUtils:
             )
             del self.NONCES[senderTag]
             logger.warning("handleLoginResponse - invalid signature :(")
+
+    async def handlePresenceUpdate(self, messageData, senderTag):
+        """
+        Handle presence update requests from clients.
+        """
+        if not self.redis_manager or self.redis_manager.connection_status != "connected":
+            await self.sendEncapsulatedReply(
+                senderTag,
+                "error: presence service unavailable",
+                action="presenceResponse",
+                context="presence"
+            )
+            return
+
+        username = messageData.get("username")
+        status = messageData.get("status", "online")
+        signature = messageData.get("signature")
+
+        # Verify the request is legitimate
+        user = self.databaseManager.getUserByUsername(username)
+        if not user:
+            await self.sendEncapsulatedReply(
+                senderTag,
+                "error: user not found",
+                action="presenceResponse",
+                context="presence"
+            )
+            return
+
+        dbSenderTag = user[2]
+        dbPublicKey = user[1]
+
+        # Simple validation - sender tag must match or signature must be valid
+        data_to_verify = json.dumps({"username": username, "status": status})
+        is_valid = (dbSenderTag == senderTag) or self.cryptoUtils.verify_signature(dbPublicKey, data_to_verify, signature)
+
+        if not is_valid:
+            await self.sendEncapsulatedReply(
+                senderTag,
+                "error: unauthorized presence update",
+                action="presenceResponse",
+                context="presence"
+            )
+            return
+            
+        # Update presence
+        if status == "offline":
+            await self.redis_manager.set_presence(username, "offline")
+        else:
+            await self.redis_manager.set_presence(username, "online")
+            
+        # Broadcast presence update
+        notification = {
+            "type": "presence_update",
+            "username": username,
+            "status": status,
+            "timestamp": time.time()
+        }
+        await self.redis_manager.publish("presence_updates", notification)
+        
+        # Return success
+        await self.sendEncapsulatedReply(
+            senderTag,
+            "success",
+            action="presenceResponse",
+            context="presence"
+        )
+        logger.info(f"Updated presence for {username}: {status}")
 
     async def sendEncapsulatedReply(self, recipientTag, content, action="challengeResponse", context=None):
         """

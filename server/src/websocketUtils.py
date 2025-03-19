@@ -9,102 +9,156 @@ load_env()
 
 class WebsocketUtils:
     def __init__(self, server_url=None):
+        # Primary URL from environment with explicit fallback chain
         self.server_url = server_url or os.getenv("WEBSOCKET_URL")
+        
+        # Failover targets in priority order
+        self.fallback_targets = [
+            os.getenv("NYM_CLIENT_HOST", "nym-client"),  # Container name in Docker network
+        ]
+        self.fallback_port = os.getenv("NYM_CLIENT_PORT", "1977")
+        
         self.websocket = None
-        self.message_callback = None  # Callback for processing messages
-        self.address = None # store the address
+        self.message_callback = None
+        self.address = None
+        self.connection_attempts = 0
+        self.reconnect_delay = 2  # seconds between connection attempts
 
     async def connect(self):
-        """Establish a WebSocket connection with the Nym client."""
-        try:
-            self.websocket = await websockets.connect(self.server_url)
-            await self.websocket.send(json.dumps({"type": "selfAddress"}))
-            response = await self.websocket.recv()
-            data = json.loads(response)
-            
-            # Store address and validate
-            self.address = data.get("address")
-            if not self.address:
-                logger.error("Failed to retrieve valid Nym address")
-                raise ValueError("Empty or invalid Nym address received")
-                
-            logger.info(f"Connected to WebSocket. Your Nym Address: {self.address}")
-            
-            # Save to file with proper error handling
+        """Establish WebSocket connection with failover support"""
+        connection_errors = []
+        urls_to_try = []
+        
+        # Start with explicit URL if provided
+        if self.server_url:
+            urls_to_try.append(self.server_url)
+        
+        # Add fallback URLs with port specification
+        for target in self.fallback_targets:
+            urls_to_try.append(f"ws://{target}:{self.fallback_port}")
+        
+        # Deduplicate URLs while preserving priority order
+        urls_to_try = list(dict.fromkeys(urls_to_try))
+        
+        for url in urls_to_try:
             try:
-               # project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-               
-                ### DIRTY HACKS
-                ### SEE COMMENT BELOW
-
-                shared_dir = "/app/shared"
-                os.makedirs(shared_dir, exist_ok=True)
-                file_path = os.path.join(shared_dir, "nym_address.txt")
-                # @gyrusdentatus
-                #file_path = os.path.join(project_root, "nym_address.txt")
-                #
-                # Save that fucker to shared mount for developer QoL improvement 
-                # might wanna change this back to the above later if it's 
-                # not really needed. Not that it's a security issue but 
-                # The lesser space to fuck up the better, AMIRITE??? ;d 
-               # file_path = os.path.join(project_root, "shared", "nym_address.txt")
+                logger.info(f"Attempting connection to: {url}")
+                self.connection_attempts += 1
                 
-                # Ensure directory exists
-                os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                self.websocket = await websockets.connect(url, ping_interval=30)
+                await self.websocket.send(json.dumps({"type": "selfAddress"}))
+                response = await self.websocket.recv()
+                data = json.loads(response)
                 
-                with open(file_path, "w") as f:
-                    f.write(self.address)
+                self.address = data.get("address")
+                if not self.address:
+                    logger.error(f"Empty address received from {url}")
+                    raise ValueError("Invalid Nym address (empty)")
                     
-                logger.info(f"Nym address saved to {file_path}")
-            except IOError as e:
-                logger.error(f"Failed to write address to file: {e}")
-                # Continue execution - failure to write file shouldn't crash the server
+                logger.info(f"Connected to {url}. Nym Address: {self.address}")
+                
+                # Connection successful, save address to file
+                self._save_address_to_file()
+                
+                # Start message loop and return on success
+                asyncio.create_task(self.receive_messages())
+                return True
+                
+            except (websockets.exceptions.InvalidURI, ValueError) as e:
+                # Configuration errors - log and continue to next endpoint
+                logger.error(f"Invalid URI or value: {url} - {str(e)}")
+                connection_errors.append(f"{url}: {str(e)}")
+                
+            except (ConnectionRefusedError, OSError, websockets.exceptions.ConnectionClosedError) as e:
+                # Network errors - try next endpoint
+                logger.warning(f"Connection to {url} failed: {str(e)}")
+                connection_errors.append(f"{url}: {str(e)}")
+                await asyncio.sleep(self.reconnect_delay)
+                
+            except Exception as e:
+                # Unexpected errors
+                logger.error(f"Unexpected error connecting to {url}: {str(e)}")
+                connection_errors.append(f"{url}: {str(e)}")
+        
+        # All connection attempts failed
+        logger.error(f"Failed to connect to any Nym client endpoint after {self.connection_attempts} attempts")
+        for err in connection_errors:
+            logger.error(f"  - {err}")
+        raise ConnectionError(f"All {len(urls_to_try)} connection attempts failed")
 
-            # Start listening for incoming messages
-            await self.receive_messages()
-        except Exception as e:
-            logger.error(f"Connection error: {e}")
-            raise  # Re-raise to signal failure up the stack
+    def _save_address_to_file(self):
+        """Write Nym address to shared file"""
+        try:
+            shared_dir = "/app/shared"
+            os.makedirs(shared_dir, exist_ok=True)
+            file_path = os.path.join(shared_dir, "nym_address.txt")
+            
+            with open(file_path, "w") as f:
+                f.write(self.address)
+                
+            logger.info(f"Nym address saved to {file_path}")
+        except IOError as e:
+            logger.error(f"Failed to write address to file: {e}")
 
     async def receive_messages(self):
-        """Listen for incoming messages and forward them to the callback."""
+        """Message reception loop with auto-reconnect"""
         try:
             while True:
-                raw_message = await self.websocket.recv()
-                logger.info("Message received")
-                message_data = json.loads(raw_message)
+                try:
+                    raw_message = await self.websocket.recv()
+                    message_data = json.loads(raw_message)
 
-                # Call the callback for further processing
-                if self.message_callback:
-                    await self.message_callback(message_data)
-                else:
-                    logger.warning("No callback set for processing messages.")
-        except websockets.exceptions.ConnectionClosed:
-            logger.warning("Connection closed by the server.")
+                    # Call the callback for processing
+                    if self.message_callback:
+                        await self.message_callback(message_data)
+                    else:
+                        logger.warning("Message received but no callback set")
+                        
+                except websockets.exceptions.ConnectionClosed as e:
+                    logger.warning(f"WebSocket connection closed: {e}")
+                    # Attempt reconnection
+                    await asyncio.sleep(self.reconnect_delay)
+                    await self.connect()
+                    
         except Exception as e:
-            logger.error(f"Error while receiving messages: {e}")
+            logger.error(f"Fatal error in message reception loop: {e}")
             
     async def send(self, message):
-        """Send a message through the WebSocket."""
+        """Send a message with auto-reconnect on failure"""
         try:
+            if not self.websocket:
+                logger.warning("No active websocket, attempting reconnection")
+                await self.connect()
+                
+            if isinstance(message, dict):
+                message = json.dumps(message)
+                
+            await self.websocket.send(message)
+            
+        except websockets.exceptions.ConnectionClosed:
+            logger.warning("Connection closed while sending, attempting reconnect")
+            await self.connect()
+            
+            # Retry once after reconnection
             if isinstance(message, dict):
                 message = json.dumps(message)
             await self.websocket.send(message)
-            logger.info("Message sent")
+            
         except Exception as e:
-            logger.error(f"Error sending message: {e}")
+            logger.error(f"Failed to send message: {e}")
+            raise
 
     async def close(self):
-        """Close the websocket connection."""
+        """Close the websocket connection cleanly"""
         if self.websocket:
             try:
                 await self.websocket.close()
-                logger.info("Websocket connection closed")
+                logger.info("WebSocket connection closed")
             except Exception as e:
                 logger.error(f"Error closing connection: {e}")
         else:
-            logger.warning("Websocket connection is not established")
+            logger.warning("No active connection to close")
 
     def set_message_callback(self, callback):
-        """Set the callback function for processing received messages."""
+        """Set callback function for message processing"""
         self.message_callback = callback

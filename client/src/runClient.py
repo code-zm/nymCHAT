@@ -11,7 +11,7 @@ from cryptographyUtils import CryptoUtils
 from connectionUtils import MixnetConnectionClient
 from messageHandler import MessageHandler
 from logUtils import logger
-
+from redisUtils import RedisClient
 ###############################################################################
 # GLOBAL / IN-MEMORY STATE
 ###############################################################################
@@ -27,6 +27,9 @@ chat_messages_container = None  # assigned in chat_page()
 
 # Global variable for storing our nym address
 global_nym_address = None
+
+# Define a global dictionary for tracking user presence
+online_status = {}  # {username: True/False}
 
 def set_active_chat(value):
     global active_chat
@@ -44,6 +47,23 @@ def set_active_chat_user(value):
 # REFRESHABLE UI FOR CHAT
 ###############################################################################
 @ui.refreshable
+def chat_list_sidebar():
+    with ui.column():
+        ui.label('Chats').classes('text-xl font-bold')
+        if not chat_list:
+            ui.label('No chats yet').classes('text-gray-400')
+        for info in chat_list:
+            with ui.row().classes('p-2 hover:bg-gray-800 cursor-pointer w-full justify-between') \
+                    .on('click', lambda _, u=info: open_chat(u)):
+                ui.label(info["name"]).classes('font-bold text-white')
+                
+                # Add online status indicator
+                username = info["name"]
+                is_online = online_status.get(username, False)
+                status_color = "green" if is_online else "gray"
+                status_tooltip = "Online" if is_online else "Offline"
+                
+                ui.icon('circle').classes(f'text-{status_color}-500').tooltip(status_tooltip)
 def render_chat_messages(current_user, target_chat, msg_dict):
     """
     Refresh the chat area to display messages properly, inside a structured column.
@@ -71,7 +91,32 @@ def render_chat_messages(current_user, target_chat, msg_dict):
                 ).classes('p-3 rounded-lg')
 
     ui.run_javascript('window.scrollTo(0, document.body.scrollHeight)')  # Auto-scroll to latest message
+async def presence_update_handler(username, status):
+    try:
+        global online_status
+        online_status[username] = (status == "online")
+        if chat_list_sidebar:
+            chat_list_sidebar.refresh()
+        if username in [chat["name"] for chat in chat_list]:
+            status_text = "online" if status == "online" else "offline"
+            ui.notify(f"{username} is now {status_text}")
+    except Exception as e:
+        logger.error(f"Error handling presence update: {e}")
 
+    """Handle presence updates from Redis."""
+#    global online_status
+    
+    # Update the status
+    online_status[username] = (status == "online")
+    
+    # Refresh the sidebar to show updated status
+    if chat_list_sidebar:
+        chat_list_sidebar.refresh()
+    
+    # Show a notification if this is a user we're chatting with
+    if username in [chat["name"] for chat in chat_list]:
+        status_text = "online" if status == "online" else "offline"
+        ui.notify(f"{username} is now {status_text}")
 ###############################################################################
 # CREATE CORE OBJECTS
 ###############################################################################
@@ -205,7 +250,7 @@ def welcome_page():
         ui.label("Welcome to NymCHAT").classes("text-3xl text-center font-bold mb-8")
         ui.button("Login", color="green-6", on_click=lambda: ui.navigate.to("/login"), icon="login").classes("mb-2")
         ui.button("Register", color="green-6", on_click=lambda: ui.navigate.to("/register"), icon="how_to_reg").classes("mb-2")
-
+# Modify login_page function to connect to Redis
 @ui.page('/login')
 def login_page():
     with ui.column().classes('max-w-2xl mx-auto items-stretch flex-grow gap-1 flex justify-center items-center h-screen w-full'):
@@ -231,21 +276,37 @@ def login_page():
 
                 # Set up UI state and load chat data
                 message_handler.set_ui_state(messages, chat_list, get_active_chat, render_chat_messages, chat_messages_container)
+                message_handler.presence_update_callback = presence_update_handler
                 load_chats_from_db()
+                
+                # Fetch initial online users
 
                 spin.props('hidden')  # Hide spinner
 
                 if message_handler.login_successful:
-                    ui.notify("Login successful! Welcome.")
-                    ui.navigate.to("/app")
-                else:
-                    ui.notify("Login Failed: Did you delete your key file?")
+                    # Fetch initial online users (only after successful login and Redis init)
+                    await asyncio.sleep(0.5)  # Allow Redis initialization to complete
+                    if message_handler.redis_client and message_handler.redis_client.connection_status == "connected":
+                        try:
+                            online_users = await message_handler.get_online_users()
+                            for user in online_users:
+                                online_status[user] = True
+                            logger.info(f"Initial online users: {online_users}")
+                        except Exception as e:
+                            logger.error(f"Failed to fetch online users: {e}")
+
+                            if message_handler.login_successful:
+                                ui.notify("Login successful! Welcome.")
+                                ui.navigate.to("/app")
+                            else:
+                                ui.notify("Login Failed: Did you delete your key file?")
 
             ui.button("Login", color="green-6", on_click=do_login, icon="login").classes("mb-2")
         else:
             ui.label("No users found. Please register first.")
 
         ui.button("Back", color="green-6", on_click=lambda: ui.navigate.to("/welcome"), icon="arrow_back_ios_new").classes("mb-2")
+
 
 @ui.page('/register')
 def register_page():
@@ -275,7 +336,7 @@ def register_page():
 
         ui.button("Register", color="green-6", on_click=do_register, icon="how_to_reg").classes("mb-2")
         ui.button("Back", color="green-6", on_click=lambda: ui.navigate.to("/welcome"), icon="arrow_back_ios_new").classes("mb-2")
-
+# Modify chat_page function to show presence and handle Redis notifications
 @ui.page('/app')
 def chat_page():
     """
@@ -287,24 +348,21 @@ def chat_page():
 
     chat_messages_container = ui.column().classes('flex-grow gap-2 overflow-auto')
 
-    def show_new_message_notification(sender, message):
+    async def show_new_message_notification(sender, message):
         with chat_messages_container:
             ui.notify(f"New message from {sender}: {message}")
+            
+            # If we don't have a chat with this sender yet, add it
+            if not any(chat["id"] == sender for chat in chat_list):
+                chat_list.append({"id": sender, "name": sender})
+                if chat_list_sidebar:
+                    chat_list_sidebar.refresh()
 
     message_handler.new_message_callback = show_new_message_notification
-
-
-    @ui.refreshable
-    def chat_list_sidebar():
-        with ui.column():
-            ui.label('Chats').classes('text-xl font-bold')
-            if not chat_list:
-                ui.label('No chats yet').classes('text-gray-400')
-            for info in chat_list:
-                with ui.row().classes('p-2 hover:bg-gray-800 cursor-pointer') \
-                        .on('click', lambda _, u=info: open_chat(u)):
-                    ui.label(info["name"]).classes('font-bold text-white')
-                    ui.label('Click to open chat').classes('text-gray-400 text-sm')
+    
+    # Register the presence update callback if not already set
+    if not message_handler.presence_update_callback:
+        message_handler.presence_update_callback = presence_update_handler
 
     def open_chat(u):
         set_active_chat(u["id"])
@@ -328,7 +386,7 @@ def chat_page():
             ui.element('q-fab-action').props('icon=logout color=green-6 label=LOGOUT') \
                 .on('click', lambda: ui.navigate.to('/'))
             ui.element('q-fab-action').props('icon=power_settings_new color=green-6 label=SHUTDOWN') \
-                .on('click', lambda: (app.shutdown(), ui.notify("Shutting down the app...")))
+                .on('click', lambda: (cleanup_and_shutdown(), ui.notify("Shutting down the app...")))
 
     message_handler.set_ui_state(messages, chat_list, get_active_chat, render_chat_messages, chat_messages_container, chat_list_sidebar)
     render_chat_messages(user_id, active_chat, messages)
@@ -341,6 +399,10 @@ def chat_page():
                 .on('keydown.enter', lambda: asyncio.create_task(send_message(text_in)))
             ui.button('Send', color="green-6", icon="send", on_click=lambda: asyncio.create_task(send_message(text_in))) \
                 .classes('text-white p-2 rounded')
+
+
+
+
 
 @ui.page('/search')
 def search_page():
@@ -405,6 +467,32 @@ async def startup_sequence():
 def shutdown_client():
     # Create a new event loop in this thread and run the shutdown coroutine
     asyncio.run(connection_client.shutdown())
+# Add a function for proper cleanup on shutdown
+async def cleanup_and_shutdown():
+    """Clean up connections and tasks before shutdown."""
+    logger.info("Cleaning up before shutdown...")
+    
+    # Stop presence heartbeat
+    if message_handler.presence_heartbeat_task:
+        await message_handler.stop_presence_heartbeat()
+    
+    # Set user as offline in Redis if available
+    if message_handler.redis_client and message_handler.redis_client.connection_status == "connected":
+        username = message_handler.current_user["username"]
+        if username:
+            await message_handler.redis_client.update_presence(username, "offline")
+            logger.info(f"Set {username} as offline")
+        
+        # Close Redis connection
+        await message_handler.redis_client.close()
+        logger.info("Redis connection closed")
+    
+    # Close Mixnet connection
+    await connection_client.shutdown()
+    logger.info("Mixnet connection closed")
+    
+    # Shut down the app
+    app.shutdown()
 
 @app.on_shutdown
 def on_shutdown():

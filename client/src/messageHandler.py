@@ -1,3 +1,5 @@
+import time
+from redisUtils import RedisClient
 import json
 import asyncio
 from nicegui import ui
@@ -16,6 +18,8 @@ class MessageHandler:
         self.current_user = {"username": None}
         self.temporary_keys = {"private_key": None, "public_key": None}
         self.db_manager = None  # Will be set after login/registration
+        self.redis_client = None  # Will be initialized during login/registration
+        self.presence_heartbeat_task = None  # Task for sending heartbeats
 
         # Wait-for-completion events
         self.registration_complete = asyncio.Event()
@@ -37,6 +41,7 @@ class MessageHandler:
         self.chat_list_sidebar_fn = None  # For refreshing the chat list sidebar
         self.chat_container = None
         self.new_message_callback = None  # To notify UI of new messages
+        self.presence_update_callback = None  # To notify UI of presence updates
 
         # Ephemeral mapping of usernames to nym addresses for p2p routing
         self.nym_addresses = {}  # {username: nym_address}
@@ -614,3 +619,194 @@ class MessageHandler:
                 logger.error(f"Failed to refresh chat UI: {e}")
         elif self.new_message_callback:
             self.new_message_callback(from_user, actual_message)
+
+# Add new methods for Redis functionality
+    async def initialize_redis(self, redis_url=None):
+        """Initialize Redis client and subscribe to notifications."""
+        try:
+            if not self.current_user["username"]:
+                logger.warning("Cannot initialize Redis: No active user")
+                return False
+
+            self.redis_client = RedisClient(redis_url)
+            connected = await self.redis_client.connect()
+            
+            if not connected:
+                logger.warning("Redis connection failed, continuing without realtime features")
+                self.redis_client = None
+                return False
+                
+            # Subscribe to notifications for the current user
+            username = self.current_user["username"]
+            await self.redis_client.subscribe_to_notifications(
+                username, 
+                self.handle_redis_notification
+            )
+            
+            # Set presence update callback
+            await self.redis_client.set_presence_callback(
+                self.handle_presence_update
+            )
+            
+            # Start heartbeat task
+            self.start_presence_heartbeat()
+            
+            logger.info(f"Redis initialized for user {username}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to initialize Redis: {e}")
+            self.redis_client = None
+            return False
+
+    def start_presence_heartbeat(self):
+        """Start a background task for sending periodic presence heartbeats."""
+        if self.redis_client and self.current_user["username"]:
+            if self.presence_heartbeat_task and not self.presence_heartbeat_task.done():
+                self.presence_heartbeat_task.cancel()
+                
+            self.presence_heartbeat_task = asyncio.create_task(
+                self._presence_heartbeat_loop()
+            )
+            logger.info("Started presence heartbeat task")
+
+    async def _presence_heartbeat_loop(self):
+        """Send periodic heartbeats to maintain presence status."""
+        try:
+            username = self.current_user["username"]
+            while True:
+                if self.redis_client and self.redis_client.connection_status == "connected":
+                    await self.redis_client.heartbeat(username)
+                await asyncio.sleep(60)  # Send heartbeat every minute
+        except asyncio.CancelledError:
+            logger.info("Presence heartbeat task cancelled")
+        except Exception as e:
+            logger.error(f"Error in presence heartbeat: {e}")
+
+    async def stop_presence_heartbeat(self):
+        """Stop the presence heartbeat task."""
+        if self.presence_heartbeat_task and not self.presence_heartbeat_task.done():
+            self.presence_heartbeat_task.cancel()
+            try:
+                await self.presence_heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            logger.info("Stopped presence heartbeat task")
+
+    async def handle_redis_notification(self, notification):
+        """Handle a notification received from Redis."""
+        try:
+            logger.info(f"Received Redis notification: {notification}")
+            
+            if not isinstance(notification, dict):
+                logger.warning(f"Invalid notification format: {notification}")
+                return
+                
+            notification_type = notification.get("type")
+            
+            if notification_type == "new_message":
+                # A new message notification - the actual message content comes via mixnet
+                # This just lets us know to expect it, or to request it if we don't get it
+                sender = notification.get("sender")
+                recipient = notification.get("recipient")
+                
+                if recipient != self.current_user["username"]:
+                    logger.warning(f"Received notification for different user: {recipient}")
+                    return
+                    
+                logger.info(f"New message notification from {sender}")
+                # We can optionally trigger a UI notification here
+                if self.new_message_callback:
+                    await self.new_message_callback(sender, "New message received")
+
+        except Exception as e:
+            logger.error(f"Error handling Redis notification: {e}")
+
+    async def handle_presence_update(self, update):
+        """Handle presence updates from Redis."""
+        try:
+            if not isinstance(update, dict):
+                return
+                
+            username = update.get("username")
+            status = update.get("status")
+            
+            if not username or not status:
+                return
+                
+            logger.info(f"Presence update: {username} is {status}")
+            
+            # Notify UI of presence change if callback exists
+            if self.presence_update_callback:
+                await self.presence_update_callback(username, status)
+                
+        except Exception as e:
+            logger.error(f"Error handling presence update: {e}")
+
+    async def get_online_status(self, username):
+        """Check if a user is online via Redis."""
+        if not self.redis_client or self.redis_client.connection_status != "connected":
+            return False
+            
+        return await self.redis_client.is_user_online(username)
+
+    async def get_online_users(self):
+        """Get list of all online users from Redis."""
+        if not self.redis_client or self.redis_client.connection_status != "connected":
+            return []
+            
+        return await self.redis_client.get_online_users()
+
+# Modify the login_user method to initialize Redis after successful login:
+    async def login_user(self, username):
+        try:
+            self.current_user["username"] = username
+            self.login_complete.clear()
+
+            private_key = self.crypto_utils.load_private_key(username)
+            if not private_key:
+                logger.error(f"No private key for {username}")
+                return
+
+            self.temporary_keys["private_key"] = private_key
+            logger.info(f"Loaded private key for {username}")
+
+            msg = MixnetMessage.login(username)
+            await self.connection_client.send_message(msg)
+            logger.info("Login message sent; waiting for challenge...")
+
+            await self.login_complete.wait()
+            
+            # Initialize Redis if login was successful
+            if self.login_successful:
+                redis_url = os.getenv("REDIS_URL")
+                if redis_url:
+                    await self.initialize_redis(redis_url)
+
+        except Exception as e:
+            logger.error(f"Login error: {e}")
+
+# Modify the handle_login_response method to ensure Redis is initialized only after successful login:
+    async def handle_login_response(self, content):
+        """
+        Handles the response after the login challenge has been completed.
+        """
+        if content == "success":
+            logger.info("Login successful!")
+            username = self.current_user["username"]
+            try:
+                self.db_manager = SQLiteManager(username)
+                logger.info("DB manager created.")
+                self.db_manager.create_user_tables(username)
+            except Exception as e:
+                logger.error(f"DB init: {e}")
+                self.login_successful = False
+                self.login_complete.set()
+                return
+
+            self.login_successful = True
+            self.login_complete.set()
+
+        else:
+            logger.error(f"Login failed: {content}")
+            self.login_successful = False
+            self.login_complete.set()

@@ -1,0 +1,71 @@
+# Multi-stage build for nym-client
+FROM rust:1.85.1-slim AS builder
+
+#ARG NYM_VERSION=master
+ARG TARGETARCH
+
+# Install build dependencies for ARM64
+RUN set -ex && \
+    apt-get update && \
+    apt-get install -y git build-essential libssl-dev pkg-config \
+                       curl ca-certificates && \
+    # Only install GUI dependencies for ARM64 builds
+    if [ "$TARGETARCH" = "arm64" ]; then \
+        apt-get install -y ripgrep libwebkit2gtk-4.0-dev libgtk-3-dev \
+                        libudev-dev squashfs-tools clang cmake; \
+    fi && \
+    # Clean up apt cache
+    rm -rf /var/lib/apt/lists/*
+RUN git clone --depth=1 https://github.com/nymtech/nym.git && \
+    cd nym && cargo build --release --bin nym-client
+# Final image
+FROM bitnami/minideb:latest 
+# Set environment variables
+ENV NYM_CLIENT_ID=nymserver \
+    NYM_CONFIG_DIR=/root/.nym
+
+# Install runtime dependencies
+RUN apt-get update && \
+    apt-get install -y curl ca-certificates openssl && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create required directories
+RUN mkdir -p /app/storage /app/secrets /root/.nym && \
+    chmod -R 777 /app/storage && \
+    chmod -R 700 /app/secrets && \
+    chmod -R 700 /root/.nym
+
+WORKDIR /app
+
+# Copy the nym-client binary from the builder stage
+COPY --from=builder /nym/target/release/nym-client /app/nym-client
+
+# Create encryption password if it doesn't exist
+RUN chmod +x /app/nym-client && \
+    mkdir -p /app/secrets && \
+    if [ ! -f "/app/secrets/encryption_password" ]; then \
+        openssl rand -base64 32 > "/app/secrets/encryption_password"; \
+    fi && \
+    chmod 600 /app/secrets/encryption_password
+
+# Create entrypoint script
+# Complete the entrypoint script properly:
+# Complete Dockerfile with properly escaped entrypoint
+
+# Ensure secrets directory exists and has correct permissions
+#RUN mkdir -p /app/secrets && chmod 700 /app/secrets
+
+# Create the entrypoint script with proper escaping and error handling
+RUN printf '#!/bin/bash\nset -e\n\n# Ensure secrets directory has correct permissions\nchmod 700 /app/secrets\n\n# Ensure password file exists\nif [ ! -f "/app/secrets/encryption_password" ]; then\n    echo "[INFO] Creating encryption password"\n    openssl rand -base64 32 > "/app/secrets/encryption_password"\n    chmod 600 "/app/secrets/encryption_password"\nfi\n\n# Validate NYM_CLIENT_ID is set\nif [ -z "$NYM_CLIENT_ID" ]; then\n    echo "[ERROR] NYM_CLIENT_ID environment variable must be set"\n    exit 1\nfi\n\n# Check if client is initialized\nif [ ! -d "/root/.nym/clients/$NYM_CLIENT_ID" ]; then\n    echo "[INFO] Initializing nym-client with ID: $NYM_CLIENT_ID"\n    /app/nym-client init --id "$NYM_CLIENT_ID" --host 0.0.0.0\nfi\n\n# Run the client\necho "[INFO] Starting nym-client with ID: $NYM_CLIENT_ID"\nexec /app/nym-client run --id "$NYM_CLIENT_ID"\n' > /app/entrypoint.sh && \
+    chmod 750 /app/entrypoint.sh
+
+# Fix port exposure
+EXPOSE 1977
+
+# Set the fixed permissions for storage
+RUN chmod 700 /app/storage
+
+
+# Use the entrypoint
+ENTRYPOINT ["/app/entrypoint.sh"]

@@ -1,0 +1,4 @@
+old.docker-compose.yml
+v1.docker-compose.yml
+Volumes/
+server/nym-data/

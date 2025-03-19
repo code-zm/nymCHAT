@@ -1,87 +1,194 @@
+# docker-compose.yml
+version: '3.8'
 
-x-logging: &logging
-  driver: "json-file"
-  options:
-    max-size: "10m"
-    max-file: "3"
+x-nym-client-base: &nym-client-base
+  build:
+    context: ./nym-client
+    dockerfile: Dockerfile.nym-client
+    args:
+      - NYM_VERSION=v1.1.16
+  restart: unless-stopped
+  networks:
+    - nym-network
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:1977/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 15s
+
+x-client-app-base: &client-app-base
+  build:
+    context: ./client
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  environment:
+    - REDIS_URL=redis://redis:6379/0
+  depends_on:
+    - redis
+  networks:
+    - nym-network
 
 services:
-  server-init:
-    image: alpine:latest
-    networks:
-      - nym_network
-    volumes:
-      - server_data:/app/storage
-    command: |
-      sh -c '
-        mkdir -p /app/storage
-        echo "your_secure_password" > /app/storage/encryption_password.txt && 
-        chmod 600 /app/storage/encryption_password.txt
-      '
-  server:
-    build:
-      context: ./server
+  # Redis for messaging and presence
+  redis:
+    image: redis:7-alpine
+    container_name: nym-redis
     restart: unless-stopped
-    depends_on:
-      - server-init
-    networks:
-      - nym_network
+    ports:
+      - "6379:6379"
     volumes:
-      - shared_data:/app/shared
-      - server_data:/app/storage
-      - nym_client_data:/root/.nym
-      - address_data:/app/shared  # CRITICAL: Shared volume with fixed path
+      - redis-data:/data
+    command: redis-server --save 60 1 --loglevel warning
+    networks:
+      - nym-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # Main server nym-client
+  nym-client-server:
+    <<: *nym-client-base
+    container_name: nym-client-server
     environment:
-      - SECRET_PATH=/app/storage/encryption_password.txt
-      - NYM_CLIENT_ID=nym_server
+      - NYM_CLIENT_ID=nymserver
+    volumes:
+      - ./volumes/nym-server/nym-data:/root/.nym:rw
+      - ./volumes/nym-server/storage:/app/storage:rw
     ports:
       - "1977:1977"
-    logging: *logging
-    healthcheck:
-      test: test -f /app/shared/nym_address.txt
-      interval: 5s
-      timeout: 5s
-      retries: 12
-      start_period: 10s
-      
-  client:
-    build: ./client
-    restart: unless-stopped
-    depends_on:
-      server:
-        condition: service_healthy
-    networks:
-      - nym_network
+
+  # Client 1 nym-client
+  nym-client-1:
+    <<: *nym-client-base
+    container_name: nym-client-1
+    environment:
+      - NYM_CLIENT_ID=client1
     volumes:
-      - shared_data:/app/shared:ro
-      - client_data:/app/storage
-      - client_nym_data:/root/.nym
-      - address_data:/app/shared:ro  # CRITICAL: Same mount point as server
-    ports: 
+      - ./volumes/client1/nym-data:/root/.nym:rw
+      - ./volumes/client1/storage:/app/storage:rw
+    ports:
+      - "1978:1977"
+
+  # Client 2 nym-client
+  nym-client-2:
+    <<: *nym-client-base
+    container_name: nym-client-2
+    environment:
+      - NYM_CLIENT_ID=client2
+    volumes:
+      - ./volumes/client2/nym-data:/root/.nym:rw
+      - ./volumes/client2/storage:/app/storage:rw
+    ports:
+      - "1979:1977"
+
+  # Client 3 nym-client
+  nym-client-3:
+    <<: *nym-client-base
+    container_name: nym-client-3
+    environment:
+      - NYM_CLIENT_ID=client3
+    volumes:
+      - ./volumes/client3/nym-data:/root/.nym:rw
+      - ./volumes/client3/storage:/app/storage:rw
+    ports:
+      - "1980:1977"
+
+  # Server application
+  nym-server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: nym-server
+    restart: unless-stopped
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - NYM_CLIENT_HOST=nym-client-server
+      - NYM_CLIENT_PORT=1977
+      - WEBSOCKET_URL=ws://nym-client-server:1977
+    volumes:
+      - ./volumes/nym-server/shared:/app/shared:rw
+    depends_on:
+      - redis
+      - nym-client-server
+    networks:
+      - nym-network
+
+  # Client application 1
+  nym-chat-client-1:
+    <<: *client-app-base
+    container_name: nym-chat-client-1
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - NYM_CLIENT_HOST=nym-client-1
+      - NYM_CLIENT_PORT=1977
+      - WEBSOCKET_URL=ws://nym-client-1:1977
+      # Fetch server address from shared volume on startup or use fallback
+      - SERVER_ADDRESS=${SERVER_ADDRESS:-42rxQ9Vra6QdXrzi9YphHiBB6tfMydiv3597fvMvhs2o.5B8GWQxPAPW9f4gfWhnM4b7th4UyMnd2hJpiy1PzxZJZ@9AHi1PfuFEH2XAM4czMpB7DbD389QQ4eCxTV87YeKZ2t}
+    volumes:
+      - ./volumes/client1/shared:/app/shared:rw
+    ports:
       - "8080:8080"
-    command: |
-      sh -c '
-        while [ ! -s /app/shared/nym_address.txt ]; do
-          echo "Waiting for valid server address..."
-          sleep 2
-        done
-        
-        SERVER_ADDRESS=$(cat /app/shared/nym_address.txt)
-        echo "Using SERVER_ADDRESS: $SERVER_ADDRESS"
-        export SERVER_ADDRESS
-        
-        exec python client/runClient.py
-      '
-    logging: *logging
+    depends_on:
+      - redis
+      - nym-client-1
+
+  # Client application 2
+  nym-chat-client-2:
+    <<: *client-app-base
+    container_name: nym-chat-client-2
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - NYM_CLIENT_HOST=nym-client-2
+      - NYM_CLIENT_PORT=1977
+      - WEBSOCKET_URL=ws://nym-client-2:1977
+      - SERVER_ADDRESS=${SERVER_ADDRESS:-42rxQ9Vra6QdXrzi9YphHiBB6tfMydiv3597fvMvhs2o.5B8GWQxPAPW9f4gfWhnM4b7th4UyMnd2hJpiy1PzxZJZ@9AHi1PfuFEH2XAM4czMpB7DbD389QQ4eCxTV87YeKZ2t}
+    volumes:
+      - ./volumes/client2/shared:/app/shared:rw
+    ports:
+      - "8081:8080"
+    depends_on:
+      - redis
+      - nym-client-2
+
+  # Client application 3
+  nym-chat-client-3:
+    <<: *client-app-base
+    container_name: nym-chat-client-3
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - NYM_CLIENT_HOST=nym-client-3
+      - NYM_CLIENT_PORT=1977
+      - WEBSOCKET_URL=ws://nym-client-3:1977
+      - SERVER_ADDRESS=${SERVER_ADDRESS:-42rxQ9Vra6QdXrzi9YphHiBB6tfMydiv3597fvMvhs2o.5B8GWQxPAPW9f4gfWhnM4b7th4UyMnd2hJpiy1PzxZJZ@9AHi1PfuFEH2XAM4czMpB7DbD389QQ4eCxTV87YeKZ2t}
+    volumes:
+      - ./volumes/client3/shared:/app/shared:rw
+    ports:
+      - "8082:8080"
+    depends_on:
+      - redis
+      - nym-client-3
+
+  # Redis Commander for debugging
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: nym-redis-commander
+    restart: unless-stopped
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8090:8081"
+    depends_on:
+      - redis
+    networks:
+      - nym-network
 
 networks:
-  nym_network:
+  nym-network:
     driver: bridge
 
 volumes:
-  server_data:
-  shared_data:
-  nym_client_data:
-  client_data:
-  client_nym_data:
-  address_data:  # Dedicated volume for address sharing
+  redis-data:
+    driver: local

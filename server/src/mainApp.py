@@ -1,3 +1,4 @@
+# Modified server/src/mainApp.py with Redis integration
 import asyncio
 import os
 import sys
@@ -9,6 +10,7 @@ from websocketUtils import WebsocketUtils
 from dbUtils import DbUtils
 from messageUtils import MessageUtils
 from cryptographyUtils import CryptoUtils
+from redisUtils import RedisManager  # Import the new Redis manager
 from logConfig import logger
 from envLoader import load_env
 
@@ -59,7 +61,6 @@ def start_client():
         logger.error(f"Failed to start Nym client: {e}")
         client_process = None
 
-
 def monitor_client():
     """Monitors the Nym client output for errors and restarts if necessary."""
     global client_process
@@ -85,8 +86,6 @@ def monitor_client():
         except Exception as e:
             logger.error(f"Unhandled error while monitoring Nym client: {e}")
 
-
-
 def graceful_shutdown(signal_received, frame):
     """Handles shutdown signals (SIGINT & SIGTERM) to terminate processes cleanly."""
     logger.info("Graceful shutdown initiated. Sending Ctrl+C to Nym client...")
@@ -100,6 +99,37 @@ def graceful_shutdown(signal_received, frame):
 
     sys.exit(0)
 
+async def presence_heartbeat(redis_manager, database_manager):
+    """
+    Periodically checks and expires user presence.
+    Also sends periodic heartbeats for the server's own status.
+    """
+    try:
+        while not shutdown_event.is_set():
+            # Get all users from the database
+            all_users = database_manager.get_all_users()
+            
+            # Get all currently online users from Redis
+            online_users = await redis_manager.get_all_online_users()
+            
+            # Log online user count
+            logger.info(f"Presence heartbeat: {len(online_users)} users online")
+            
+            # Wait for next cycle
+            await asyncio.sleep(60)  # Check every minute
+    except Exception as e:
+        logger.error(f"Error in presence heartbeat: {e}")
+
+async def handle_redis_message(channel, data):
+    """
+    Handle messages received from Redis subscriptions.
+    This function will be called when new messages arrive on subscribed channels.
+    """
+    try:
+        logger.info(f"Redis message received on channel {channel}: {data}")
+        # Add processing logic as needed
+    except Exception as e:
+        logger.error(f"Error handling Redis message: {e}")
 
 async def main():
     """Main asynchronous function handling WebSocket communication."""
@@ -108,12 +138,32 @@ async def main():
     websocket_url = os.getenv("WEBSOCKET_URL")
     db_path = os.getenv("DATABASE_PATH", "storage/nym_server.db")
     key_dir = os.getenv("KEYS_DIR", "storage/keys")
+    redis_url = os.getenv("REDIS_URL")
 
     cryptography_utils = CryptoUtils(key_dir, password)
     database_manager = DbUtils(db_path)
+    
+    # Initialize Redis if URL is provided
+    redis_manager = None
+    if redis_url:
+        try:
+            redis_manager = RedisManager(redis_url)
+            redis_connected = await redis_manager.connect()
+            if redis_connected:
+                logger.info("Redis connected successfully")
+                # Subscribe to system channels
+                await redis_manager.subscribe("system_events", handle_redis_message)
+                # Start presence heartbeat task
+                asyncio.create_task(presence_heartbeat(redis_manager, database_manager))
+            else:
+                logger.warning("Redis connection failed, continuing without Redis features")
+                redis_manager = None
+        except Exception as e:
+            logger.error(f"Redis initialization error: {e}")
+            redis_manager = None
 
     websocket_manager = WebsocketUtils(websocket_url)
-    message_handler = MessageUtils(websocket_manager, database_manager, cryptography_utils, password)
+    message_handler = MessageUtils(websocket_manager, database_manager, cryptography_utils, password, redis_manager)
 
     websocket_manager.set_message_callback(message_handler.processMessage)
 
@@ -133,6 +183,8 @@ async def main():
         logger.error(f"Error occurred: {e}")
     finally:
         logger.info("Closing connections...")
+        if redis_manager:
+            await redis_manager.close()
         await websocket_manager.close()
         database_manager.close()
 

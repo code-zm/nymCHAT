@@ -21,11 +21,9 @@ COPY .env.example .env.example
 COPY password.txt password.txt
 
 # Ensure the shell scripts are executable
-RUN chmod +x scripts/*.sh
+RUN chmod +x scripts/*.sh && scripts/init.sh
 
-# Run the installation script
-RUN scripts/install.sh
 
-EXPOSE 1977
+EXPOSE 2001
 # Set entrypoint to run the Nym client
 ENTRYPOINT ["scripts/entrypoint.sh"]
