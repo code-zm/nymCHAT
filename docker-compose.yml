@@ -20,7 +20,7 @@ services:
       '
   server:
     build:
-      context: ./server/
+      context: ./server
     restart: unless-stopped
     depends_on:
       - server-init
@@ -70,7 +70,7 @@ services:
         echo "Using SERVER_ADDRESS: $SERVER_ADDRESS"
         export SERVER_ADDRESS
         
-        exec python src/runClient.py
+        exec python client/runClient.py
       '
     logging: *logging
 
