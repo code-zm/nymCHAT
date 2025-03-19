@@ -12,6 +12,7 @@ class WebsocketUtils:
         self.server_url = server_url or os.getenv("WEBSOCKET_URL")
         self.websocket = None
         self.message_callback = None  # Callback for processing messages
+        self.address = None # store the address
 
     async def connect(self):
         """Establish a WebSocket connection with the Nym client."""
@@ -87,7 +88,6 @@ class WebsocketUtils:
         """Send a message through the WebSocket."""
         try:
             if isinstance(message, dict):
-                # Convert the dictionary to a JSON string
                 message = json.dumps(message)
             await self.websocket.send(message)
             logger.info("Message sent")

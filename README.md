@@ -14,11 +14,38 @@ Initially, messages are routed through the discovery node; however, clients can 
 
 ---
 
-## Architecture Overview
+## Quickstart
+For ease of use, we recommend running the app via Docker.
+
+```
+# Client
+docker build -t nymchat:latest .
+
+docker run -d -p 8080 -v $(pwd)/storage:/app/storage nymchat:latest
+
+
+# Discovery Node
+Docker build -t nymserver:latest
+
+docker run -d \
+    -v $(pwd)/nym-data:/root/.nym:rw \
+    -v $(pwd)/storage:/app/storage \
+    --name nym-server \
+    nymserver:latest
+```
+
+For more detailed documentation on building, troubleshooting, and running the client and server yourself, see:
+
+[build docs](docs/Build.md)
+
+[client README](client/README.md)
+
+[server README](server/README.md)
+
+
+## Architecture
 
 nymCHAT implements a pseudonymous message routing system with two key components:
-
-![architecture diagram](images/architecture.png)
 
 1. **Discovery Node Server**: 
    - Manages username → (public_key, senderTag) mappings
@@ -31,6 +58,8 @@ nymCHAT implements a pseudonymous message routing system with two key components
    - Uses ECDH + AES-GCM for end-to-end message encryption
    - Implements ephemeral "handshakes" for direct p2p routing
    - Stores contacts and messages in SQLite database
+
+![architecture diagram](images/architecture.png)
 
 ---
 
