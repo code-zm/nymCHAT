@@ -31,21 +31,20 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Copy only the files needed at runtime
-COPY requirements.txt ./
+COPY requirements.txt .
 COPY src/ src/
 COPY storage/ storage/
+COPY .env.example .env
 
 # Copy the pre-built wheel from the builder stage
 COPY --from=builder /wheel/ /wheel/
 
 # Install runtime Python dependencies and the built wheel
 RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir /wheel/*.whl && \
-    rm -rf /wheel
+    pip install --no-cache-dir /wheel/*.whl
 
 # Expose the port your application uses
 EXPOSE 8080
 
 # Launch the application
 CMD ["python", "src/runClient.py"]
-
