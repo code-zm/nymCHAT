@@ -2,7 +2,7 @@
 
 ### Docker Compose Deployment
 
-The fastest way to deploy nymCHAT server is with Docker Compose:
+The fastest way to deploy both the discovery node & client is with Docker Compose:
 
 ```bash
 # Clone the repository
@@ -15,18 +15,28 @@ echo "your-secure-password" > server/password.txt
 chmod 600 server/password.txt
 
 # Deploy with docker-compose
-docker-compose up -d
+docker compose up --build -d
 ```
 
-This deploys the discovery node server. The docker-compose configuration:
+This deploys the discovery node server and client, with the client automatically configured to use your discovery node. The docker-compose configuration:
 - Builds the server container with the required dependencies
 - Mounts persistent volumes for Nym identity and database
 - Runs the `install.sh` script to set up the Nym client
 - Executes the server application that handles message routing
 
-### Local Development Setup
+### Building from Source
 
 #### Server Setup
+
+Note: need the `nym-client` binary installed, if you're on linux based os this can be installed directly from https://github.com/nymtech/nym/releases/
+
+If running on mac, try this installation script. 
+You will need to have Brew installed.
+
+```
+curl -fsSL https://raw.githubusercontent.com/dial0ut/nym-build/main/nym_build.sh | bash
+```
+
 
 ```bash
 # 1. Set up a virtual environment
@@ -39,15 +49,11 @@ pip install -r requirements.txt  # Or: uv pip install -r requirements.txt
 
 # 3. Configure the server
 cp .env.example .env
-echo "your-secure-password" > password.txt
+echo "your-secure-password" >> password.txt
 chmod 600 password.txt
 
 # 4. Set up the Nym client binary
 
-# on MacOS try this script for automated build 
-# it installs Rust, all tools needed with user prompts
-# You will need to have Brew installed obviously.
-curl -fsSL https://raw.githubusercontent.com/dial0ut/nym-build/main/nym_build.sh | bash
 
 # 5. Initialize Nym client 
 ~/.local/bin/nym-client init --id nym_server
@@ -64,13 +70,12 @@ python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # 2. Install Python dependencies
-pip install nicegui cryptography  # Or: uv pip install nicegui cryptography
+pip install -r requirements.txt  # Or: uv pip install nicegui cryptography
 # 3. Build the Rust FFI component
 cd async_ffi
-cargo build --release
-# 4. Create a config file
-
-echo "SERVER_ADDRESS=<your_server_nym_address>" > .env
+maturin build --release
+# 4. Set the discovery node address
+cp .env.example .env # Note: the address in the .env.example is the official nymCHAT discovery node
 
 # 5. Run the client
 cd ..
@@ -104,7 +109,7 @@ The deployment uses a bridge network (`nym_network`) to isolate the application'
 The architecture leverages Docker volumes for persistence and inter-service communication:
 
 - `server_data`: Stores server-specific data (SQLite DB and encryption keys)
-- `nym_client_data`/`client_nym_data`: Separate Nym identities for server and client 
+- `server_nym_data`/`client_nym_data`: Separate Nym identities for server and client 
 - `client_data`: Client-specific storage for local databases
 - `address_data`: Critical shared volume mounted at `/app/shared` in both containers
 
@@ -121,13 +126,13 @@ If you experience networking issues between containers:
    ncat localhost 8080 -v # if the webUI is working, you should get the same result. 
    HEAD / HTTP/1.1 # smash enter until server responds 
    # Install netcat in a container if needed
-   docker-compose exec server apk add --no-cache netcat-openbsd
+   docker compose exec server apk add --no-cache netcat-openbsd
    
    # From server, verify client is reachable (replace PORT with the internal port)
-   docker-compose exec server nc -zv client PORT
+   docker compose exec server nc -zv client PORT
    
    # From client, verify server is reachable
-   docker-compose exec client nc -zv server 2000
+   docker compose exec client nc -zv server 2000
    ```
 
 2. Verify the shared address file exists:
@@ -138,14 +143,14 @@ If you experience networking issues between containers:
 
 3. Check container logs for specific errors:
    ```bash
-   docker-compose logs server
-   docker-compose logs client
+   docker compose logs server
+   docker compose logs client
    ```
 
 4. Verify volume mounts are working correctly:
    ```bash
-   docker-compose exec server ls -la /app/shared
-   docker-compose exec client ls -la /app/shared
+   docker compose exec server ls -la /app/shared
+   docker compose exec client ls -la /app/shared
    ```
 
 ### Container Startup Sequence
@@ -160,6 +165,4 @@ The containers follow a specific startup sequence:
 **This orchestrated startup ensures the client always has the correct server address before attempting connection.**
 
 Hopefully, this explanation can explain everything you need to know about the details on how the networking architecture works, why volumes are shared between containers, and how to troubleshoot common issues. 
-
-The key *innovation* in this setup is using a **shared volume** as a **communication channel for the server's Nym address, which allows the client to connect to the correct discovery node**_ **without hardcoding addresses.**_
 

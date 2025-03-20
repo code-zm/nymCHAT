@@ -5,9 +5,14 @@ Build:
 docker build -t nymchat:latest .
 ```
 
-Run
+Run:
 ```
-docker run -d -p 8080 -v $(pwd)/storage:/app/storage nymchat:latest
+docker run -d -p 8080 -v $(pwd)/storage:/app/storage --name nymchat-client nymchat:latest
+```
+
+Check logs:
+```
+docker logs -f nymchat-client
 ```
 
 
@@ -40,7 +45,7 @@ pip install -r requirements.txt
 4. Build the python-rust bindings
 ```
 cd async_ffi # change to the rust ffi directory 
-maturin build # build the .whl
+maturin build --release # build the .whl
 ```
 *Take note of where the .whl file is built, usually `/target/wheels/`*
 

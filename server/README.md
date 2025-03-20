@@ -1,5 +1,5 @@
-## nymDirectory
-A discovery / remailer service used by nymCHAT clients. 
+## Discovery Node
+A discovery / message relay service used by nymCHAT clients. 
 
 ## Installation
 
@@ -16,7 +16,7 @@ cd nymCHAT/server
 
 #### Step 2: Configuration
 Before we build the Docker image, we have to do some setup.
-First, Create the `.env` file:
+First, create the `.env` file:
 ```sh
 cp .env.example .env
 ```
@@ -31,7 +31,7 @@ echo "your-secure-password" > password.txt
 #### Step 3. Build the Docker Image
 This installs dependencies and sets up the nym-client.
 ```sh
-docker build -t nymdir:latest .
+docker build -t nymserver:latest .
 ```
 
 #### Step 4: Run the Docker Container
@@ -40,8 +40,8 @@ Since we are running a discovery service, we want persistent storage across runs
 docker run -d \
     -v $(pwd)/nym-data:/root/.nym:rw \
     -v $(pwd)/storage:/app/storage \
-    --name nym-dir \
-    nymdir:latest
+    --name nymchat-server \
+    nymserver:latest
 ```
 
 **Command Arguments**
@@ -60,20 +60,20 @@ docker ps
 
 **View Logs**
 ```sh
-docker logs -f nym-dir
+docker logs -f nymchat-server
 ```
 
 **Stop the Container**
 ```sh
-docker stop nym-dir
+docker stop nymchat-server
 ```
 
 **Start the Container**
 ```sh
-docker start nym-dir
+docker start nymchat-server
 ```
 
 **Remove the Container**
 ```sh
-docker rm -f nym-dir
+docker rm -f nymchat-server
 ```
