@@ -1,4 +1,8 @@
 ## Docker Build
+Make sure to set your .env first (.env.example for an example)
+```
+echo "SERVER_ADDRESS=<discovery node address>" >> .env
+```
 
 Build:
 ```
@@ -9,6 +13,8 @@ Run:
 ```
 docker run -d -p 8080 -v $(pwd)/storage:/app/storage --name nymchat-client nymchat:latest
 ```
+
+Navigate to `localhost:8080` in your browser!
 
 Check logs:
 ```
@@ -52,6 +58,10 @@ maturin build --release # build the .whl
 5. Install the FFI library
 ```
 pip install target/wheels/*.whl
+```
+6. Setup your .env (see .env.example for an example)
+```
+echo "SERVER_ADDRESS=<discovery node address>" >> .env
 ```
 
 ---
@@ -98,4 +108,4 @@ python src/runClient.py # launch the client
 - `mixnetMessages.py`: Constructs messages for communication with `nym-client`.
 - `runClient.py`: Runs the user interface using NiceGUI.
 - `storage/`: Directory where keys and databases are stored.
-- `client/`: Directory where the scripts are stored. 
+- `src/`: Directory where the scripts are stored. 
