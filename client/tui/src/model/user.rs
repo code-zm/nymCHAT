@@ -7,4 +7,3 @@ pub struct User {
     pub display_name: String,
     pub online: bool,
 }
-

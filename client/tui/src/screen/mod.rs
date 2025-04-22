@@ -13,41 +13,12 @@ pub struct ScreenState {
 }
 
 impl ScreenState {
-    pub fn next_section(&mut self) {
-        match &mut self.current {
-            Screen::Chat(screen) => screen.next_section(),
-        }
-    }
+    // Navigation methods removed; focus switching now handled in event handlers
 
-    pub fn prev_section(&mut self) {
-        match &mut self.current {
-            Screen::Chat(screen) => screen.prev_section(),
-        }
-    }
-
-    pub fn section(&self) -> usize {
-        match &self.current {
-            Screen::Chat(screen) => screen.section.to_index(),
-        }
-    }
-
-    pub fn is_chat(&self) -> bool {
-        matches!(self.current, Screen::Chat(_))
-    }
-
+    /// Get a mutable reference to the ChatScreen, if active
     pub fn as_chat_mut(&mut self) -> Option<&mut ChatScreen> {
-        if let Screen::Chat(chat) = &mut self.current {
-            Some(chat)
-        } else {
-            None
-        }
-    }
-
-    pub fn as_chat(&self) -> Option<&ChatScreen> {
-        if let Screen::Chat(chat) = &self.current {
-            Some(chat)
-        } else {
-            None
+        match &mut self.current {
+            Screen::Chat(chat) => Some(chat),
         }
     }
 }
@@ -59,4 +30,3 @@ impl Default for ScreenState {
         }
     }
 }
-

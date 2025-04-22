@@ -5,20 +5,17 @@ pub struct MainLayout {
     pub footer: Rect,
 }
 
-pub fn main_layout(frame: &mut ratatui::Frame) -> MainLayout {
+pub fn main_layout(area: Rect) -> MainLayout {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(0),    // content
             Constraint::Length(1), // footer
         ])
-        .split(frame.area());
+        .split(area);
 
     MainLayout {
         content: chunks[0],
         footer: chunks[1],
     }
 }
-
-
-
