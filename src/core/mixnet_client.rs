@@ -89,7 +89,7 @@ impl MixnetService {
         let public_key = String::from_utf8(public_pem.clone())
             .map_err(|e| anyhow!(format!("PEM to UTF-8 error: {}", e)))?;
         // store user in database
-        self.db.register_user(username, &public_key)?;
+        self.db.register_user(username, &public_key).await?;
         // build registration envelope
         let env = MixnetEnvelope::register(username, &public_key);
         let inner = env.to_json()?;
@@ -121,7 +121,7 @@ impl MixnetService {
     /// Query for a user's public key via the server
     pub async fn query_user(&self, username: &str) -> Result<Option<(String, String)>> {
         // for now, lookup in local DB
-        Ok(self.db.get_user(username)?)
+        Ok(self.db.get_user(username).await?)
     }
 
     /// Send a message via the central server with content and signature

@@ -221,6 +221,12 @@ impl App {
                 self.handler = Some(handler);
             }
         }
+        // failed to connect? log error and continue
+        if self.handler.is_none() {
+            if let Ok(mut logs) = LOG_BUFFER.lock() {
+                logs.push("Error: failed to connect to mixnet".into());
+            }
+        }
         // Move to welcome screen
         self.phase = Phase::Welcome;
         // Main event loop
@@ -333,29 +339,32 @@ impl App {
                             // start async login/register
                             KeyCode::Enter if self.welcome_mode.is_some() && !self.welcome_loading => {
                                 // start welcome loading; keep welcome_mode until task completes
-                                self.welcome_loading = true;
-                                let mode = self.welcome_mode.unwrap();
-                                let user = std::mem::take(&mut self.input_buffer);
-                                self.welcome_user = Some(user.clone());
-                                if let Ok(mut logs) = LOG_BUFFER.lock() { logs.clear(); }
-                                let mut handler = self.handler.take().unwrap();
-                                let h = match mode {
-                                    WelcomeMode::Register => {
-                                        info!("Registering {}", user);
-                                        tokio::spawn(async move {
-                                            let success = handler.register_user(&user).await.unwrap_or(false);
-                                            HandleResult::Welcome(handler, mode as usize, user, success)
-                                        })
-                                    }
-                                    WelcomeMode::Login => {
-                                        info!("Logging in {}", user);
-                                        tokio::spawn(async move {
-                                            let success = handler.login_user(&user).await.unwrap_or(false);
-                                            HandleResult::Welcome(handler, mode as usize, user, success)
-                                        })
-                                    }
-                                };
-                                self.search_handle = Some(h);
+                                if let Some(mut handler) = self.handler.take() {
+                                    self.welcome_loading = true;
+                                    let mode = self.welcome_mode.unwrap();
+                                    let user = std::mem::take(&mut self.input_buffer);
+                                    self.welcome_user = Some(user.clone());
+                                    if let Ok(mut logs) = LOG_BUFFER.lock() { logs.clear(); }
+                                    let h = match mode {
+                                        WelcomeMode::Register => {
+                                            info!("Registering {}", user);
+                                            tokio::spawn(async move {
+                                                let success = handler.register_user(&user).await.unwrap_or(false);
+                                                HandleResult::Welcome(handler, mode as usize, user, success)
+                                            })
+                                        }
+                                        WelcomeMode::Login => {
+                                            info!("Logging in {}", user);
+                                            tokio::spawn(async move {
+                                                let success = handler.login_user(&user).await.unwrap_or(false);
+                                                HandleResult::Welcome(handler, mode as usize, user, success)
+                                            })
+                                        }
+                                    };
+                                    self.search_handle = Some(h);
+                                } else if let Ok(mut logs) = LOG_BUFFER.lock() {
+                                    logs.push("Error: not connected to mixnet".into());
+                                }
                             }
                             KeyCode::Char('q') if self.welcome_mode.is_none() && !self.welcome_loading => self.quit(),
                             _ => {}
