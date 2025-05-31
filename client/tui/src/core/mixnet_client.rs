@@ -33,7 +33,7 @@ impl MixnetService {
     /// Create new service: opens DB, connects client, and spawns receive loop
     pub async fn new(db_path: &str) -> Result<(Self, mpsc::Receiver<Incoming>)> {
         // open database
-        let db = Arc::new(Db::open(db_path)?);
+        let db = Arc::new(Db::open(db_path).await?);
         db.init_global()?;
         // connect mixnet client
         let client = MixnetClientBuilder::new_ephemeral()

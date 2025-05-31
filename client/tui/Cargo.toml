@@ -30,6 +30,8 @@ thiserror = "1.0"
 log = "0.4"
 env_logger = "0.9"
 dotenvy = "0.15"
-fastrand = "1.9"
+ fastrand = "1.9"
+sqlx = { version = "0.6", features = ["sqlite", "runtime-tokio", "chrono"] }
+# removed tachyonfx
 #[removed] rand_core = "0.6"
 #[removed] ring = "0.16"

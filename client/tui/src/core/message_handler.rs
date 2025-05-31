@@ -32,12 +32,12 @@ pub struct MessageHandler {
 
 impl MessageHandler {
     /// Create a new handler by wrapping the mixnet service and DB
-    pub fn new(
+    pub async fn new(
         service: MixnetService,
         incoming_rx: Receiver<Incoming>,
         db_path: &str,
     ) -> anyhow::Result<Self> {
-        let db = Db::open(db_path)?;
+        let db = Db::open(db_path).await?;
         db.init_global()?;
         Ok(Self {
             crypto: Crypto,
@@ -61,7 +61,7 @@ impl MessageHandler {
         // Convert public key PEM to UTF-8 string
         let public_key_pem = String::from_utf8(pub_pem.clone())?;
         // Persist and send the public key in PEM (SubjectPublicKeyInfo) format
-        self.db.register_user(username, &public_key_pem)?;
+        self.db.register_user(username, &public_key_pem).await?;
         self.service
             .send_registration_request(username, &public_key_pem)
             .await?;
@@ -164,7 +164,7 @@ impl MessageHandler {
                             let res = (user.to_string(), pk.to_string());
                             // Persist contact
                             if let Some(me) = &self.current_user {
-                                let _ = self.db.add_contact(me, user, pk);
+                                let _ = self.db.add_contact(me, user, pk).await;
                             }
                             return Ok(Some(res));
                         }
@@ -181,7 +181,8 @@ impl MessageHandler {
         // 1) Persist locally
         let sender = self.current_user.as_deref().unwrap_or("");
         self.db
-            .save_message(sender, recipient, true, text, Utc::now())?;
+            .save_message(sender, recipient, true, text, Utc::now())
+            .await?;
 
         // 2) Build a JSON payload matching the Python client:
         //    { "sender": "<you>", "recipient": "<them>", "body": "<your text>" }
@@ -244,7 +245,8 @@ impl MessageHandler {
                                     false,
                                     &message,
                                     incoming.ts,
-                                );
+                                )
+                                .await;
                             }
                             msgs.push((sender.to_string(), message));
                         }
