@@ -12,7 +12,7 @@ tokio-stream = "0.1"
 color-eyre = "0.6"
 
 # core dependencies for mixnet client
-nym-sdk = { git = "https://github.com/nymtech/nym", branch = "develop" }
+nym-sdk = { git = "https://github.com/nymtech/nym", branch = "master" }
 once_cell = "1.17"
 base64 = "0.21"
 # Crypto utilities: only use ring, pem, base64, and hex

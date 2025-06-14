@@ -38,7 +38,7 @@ impl MessageHandler {
         db_path: &str,
     ) -> anyhow::Result<Self> {
         let db = Db::open(db_path).await?;
-        db.init_global()?;
+        db.init_global().await?;
         Ok(Self {
             crypto: Crypto,
             service,
@@ -90,7 +90,7 @@ impl MessageHandler {
                 if let Some(result) = env.content {
                     if result == "success" {
                         // Registration succeeded
-                        self.db.init_user(username)?;
+                        self.db.init_user(username).await?;
                         self.current_user = Some(username.to_string());
                         return Ok(true);
                     } else {
@@ -134,8 +134,8 @@ impl MessageHandler {
             // Handle final login response
             else if env.action == "challengeResponse" && env.context.as_deref() == Some("login") {
                 if let Some(result) = env.content {
-                    if result == "success" {
-                        self.db.init_user(username)?;
+                if result == "success" {
+                        self.db.init_user(username).await?;
                         self.current_user = Some(username.to_string());
                         return Ok(true);
                     } else {

@@ -14,7 +14,6 @@ use std::sync::Mutex;
 use std::fs;
 use std::collections::HashMap;
 use std::time::Duration;
-// tachyonfx imports removed
 
 /// The different UI phases
 /// The different UI phases
@@ -23,6 +22,11 @@ pub enum Phase {
     Connect,
     Connecting,
     Welcome,
+    Register,
+    Registering,
+    RegisterSuccess,
+    Login,
+    LoggingIn,
     Chat,
     Search,
 }
@@ -36,24 +40,20 @@ pub struct App {
     pub input_buffer: String,
     /// Backend message handler (initialized on connect)
     pub handler: Option<MessageHandler>,
+    /// Post-registration success flag
+    reg_success: bool,
     /// Search mode buffer & result
     search_buffer: String,
     search_result: Option<String>,
     // search loading animation state
     search_loading: bool,
     search_spinner_idx: usize,
-    // handle for in-flight search or welcome-login/register task
-    search_handle: Option<tokio::task::JoinHandle<HandleResult>>,
+    // handle for in-flight search query (returns handler and query result)
+    search_handle: Option<tokio::task::JoinHandle<(MessageHandler, anyhow::Result<Option<(String, String)>>)>>,
     /// Log panel scroll offset (0 = bottom/latest)
     log_scroll: usize,
     /// Outgoing messages queued for sending after local echo
     pub(crate) pending_outgoing: Vec<(usize, String)>,
-    /// are we in “welcome” input mode? (login vs register)
-    welcome_mode: Option<WelcomeMode>,
-    /// which username we’re registering/logging in
-    welcome_user: Option<String>,
-    /// true once Enter pressed on welcome input, until task finishes
-    welcome_loading: bool,
     // Splash animation state
     splash_pages: Vec<String>,      // pre-rendered Figlet outputs
     splash_fonts: Vec<&'static str>,// font names for labels
@@ -61,18 +61,6 @@ pub struct App {
     splash_step: usize,             // current glow step (0..max)
     splash_rising: bool,            // glow direction
     spinner_idx: usize,             // spinner animation index
-    // tachyonfx effect fields removed
-}
-/// Which welcome action the user picked
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum WelcomeMode {
-    Login,
-    Register,
-}
-/// Unified task result for search or welcome-login/register
-enum HandleResult {
-    Search(MessageHandler, anyhow::Result<Option<(String, String)>>),
-    Welcome(MessageHandler, usize, String, bool),
 }
 
 impl App {
@@ -84,6 +72,7 @@ impl App {
             logged_in_user: None,
             input_buffer: String::new(),
             handler: None,
+            reg_success: false,
             search_buffer: String::new(),
             search_result: None,
             search_loading: false,
@@ -91,10 +80,6 @@ impl App {
             search_handle: None,
             log_scroll: 0,
             pending_outgoing: Vec::new(),
-            // welcome-page login/register state
-            welcome_mode: None,
-            welcome_user: None,
-            welcome_loading: false,
             // Splash animation state
             splash_pages: Vec::new(),
             splash_fonts: vec![
@@ -106,7 +91,6 @@ impl App {
             splash_step: 0,
             splash_rising: true,
             spinner_idx: 0,
-            // tachyonfx initialization removed
         }
     }
     /// Pre-render a single random splash page by calling figlet for one randomly chosen font
@@ -186,7 +170,7 @@ impl App {
         // Connecting: spawn mixnet client creation and show spinner until done or timeout
         self.spinner_idx = 0;
         let connect_handle = tokio::spawn(async {
-            crate::core::mixnet_client::MixnetService::new("/data/app.db").await
+            crate::core::mixnet_client::MixnetService::new("storage/client.db").await
         });
         let start = std::time::Instant::now();
         let timeout = Duration::from_secs(10);
@@ -216,60 +200,41 @@ impl App {
             }
         }
         // Retrieve connection result if any
-        if let Ok(Ok((svc, rx))) = connect_handle.await {
-            if let Ok(handler) = MessageHandler::new(svc, rx, "/data/app.db").await {
-                self.handler = Some(handler);
-            }
-        }
-        // failed to connect? log error and continue
-        if self.handler.is_none() {
-            if let Ok(mut logs) = LOG_BUFFER.lock() {
-                logs.push("Error: failed to connect to mixnet".into());
+        if let Ok(conn_res) = connect_handle.await {
+            match conn_res {
+                Ok((svc, rx)) => {
+                    if let Ok(handler) = MessageHandler::new(svc, rx, "storage/client.db").await {
+                        self.handler = Some(handler);
+                    }
+                }
+                Err(e) => {
+                    log::error!("Mixnet connection failed: {}", e);
+                }
             }
         }
         // Move to welcome screen
         self.phase = Phase::Welcome;
         // Main event loop
         while self.running {
-            // —————— Poll outstanding search or welcome task ——————
+            // —————— Poll outstanding search and advance spinner ——————
             if let Some(handle) = &mut self.search_handle {
                 if handle.is_finished() {
-                    if let Ok(result) = handle.await {
-                        match result {
-                            HandleResult::Welcome(handler, mode_idx, user, success) => {
-                                self.handler = Some(handler);
-                                self.welcome_loading = false;
-                                if success && mode_idx == WelcomeMode::Login as usize {
-                                    // login succeeded → enter chat
-                                    self.logged_in_user = Some(User {
-                                        id: user.clone(),
-                                        username: user.clone(),
-                                        display_name: user.clone(),
-                                        online: true,
-                                    });
-                                    self.input_buffer.clear();
-                                    self.phase = Phase::Chat;
-                                } else {
-                                    // back to login/register choice
-                                    self.welcome_mode = None;
-                                }
+                    // retrieve handler and result
+                    if let Ok((handler, res)) = handle.await {
+                        // restore handler
+                        self.handler = Some(handler);
+                        // set search result
+                        match res {
+                            Ok(opt) => {
+                                self.search_result = opt.map(|(u, _)| u).or(Some("<not found>".into()));
                             }
-                            HandleResult::Search(handler, res) => {
-                                self.handler = Some(handler);
-                                self.search_loading = false;
-                                match res {
-                                    Ok(opt) => {
-                                        self.search_result = opt.map(|(u, _)| u)
-                                                           .or(Some("<not found>".into()));
-                                    }
-                                    Err(_) => {
-                                        self.search_result = Some("<not found>".into());
-                                    }
-                                }
+                            Err(_) => {
+                                self.search_result = Some("<not found>".into());
                             }
                         }
                     }
                     self.search_handle = None;
+                    self.search_loading = false;
                 } else {
                     // animate loader
                     self.search_spinner_idx = self.search_spinner_idx.wrapping_add(1);
@@ -294,11 +259,7 @@ impl App {
                     }
                 }
             }
-            // advance the loader spinner on Welcome→loading each frame
-            if self.phase == Phase::Welcome && self.welcome_loading {
-                self.spinner_idx = self.spinner_idx.wrapping_add(1);
-            }
-            // draw UI normally
+            // draw every frame
             terminal.draw(|f| self.draw(f))?;
             // small delay to reduce CPU
             std::thread::sleep(Duration::from_millis(50));
@@ -320,53 +281,133 @@ impl App {
                     }
                     match self.phase {
                         Phase::Welcome => match key.code {
-                            // menu commands only when not in input mode
-                            KeyCode::Char('l') | KeyCode::Char('L') if self.welcome_mode.is_none() && !self.welcome_loading => {
+                            KeyCode::Char('l') | KeyCode::Char('L') => {
                                 self.input_buffer.clear();
-                                self.welcome_mode = Some(WelcomeMode::Login);
+                                self.phase = Phase::Login;
                             }
-                            KeyCode::Char('r') | KeyCode::Char('R') if self.welcome_mode.is_none() && !self.welcome_loading => {
+                            KeyCode::Char('r') | KeyCode::Char('R') => {
                                 self.input_buffer.clear();
-                                self.welcome_mode = Some(WelcomeMode::Register);
+                                self.phase = Phase::Register;
                             }
-                            // when typing username
-                            KeyCode::Char(c) if self.welcome_mode.is_some() && !self.welcome_loading => {
-                                self.input_buffer.push(c);
-                            }
-                            KeyCode::Backspace if self.welcome_mode.is_some() && !self.welcome_loading => {
+                            KeyCode::Char('q') => self.quit(),
+                            _ => {}
+                        },
+                        Phase::Register => match key.code {
+                            KeyCode::Char(c) => self.input_buffer.push(c),
+                            KeyCode::Backspace => {
                                 self.input_buffer.pop();
                             }
-                            // start async login/register
-                            KeyCode::Enter if self.welcome_mode.is_some() && !self.welcome_loading => {
-                                // start welcome loading; keep welcome_mode until task completes
+                            KeyCode::Enter => {
                                 if let Some(mut handler) = self.handler.take() {
-                                    self.welcome_loading = true;
-                                    let mode = self.welcome_mode.unwrap();
-                                    let user = std::mem::take(&mut self.input_buffer);
-                                    self.welcome_user = Some(user.clone());
-                                    if let Ok(mut logs) = LOG_BUFFER.lock() { logs.clear(); }
-                                    let h = match mode {
-                                        WelcomeMode::Register => {
-                                            info!("Registering {}", user);
-                                            tokio::spawn(async move {
-                                                let success = handler.register_user(&user).await.unwrap_or(false);
-                                                HandleResult::Welcome(handler, mode as usize, user, success)
-                                            })
+                                    let user = self.input_buffer.clone();
+                                    if let Ok(mut logs) = LOG_BUFFER.lock() {
+                                        logs.clear();
+                                    }
+                                    info!("Registering user: {}", user);
+                                    // spawn registration task, moving handler
+                                    let reg_handle = tokio::spawn(async move {
+                                        let success =
+                                            handler.register_user(&user).await.unwrap_or(false);
+                                        (handler, success)
+                                    });
+                                    self.phase = Phase::Registering;
+                                    // poll task until completion, updating UI
+                                    while !reg_handle.is_finished() {
+                                        terminal.draw(|f| self.draw(f))?;
+                                        std::thread::sleep(Duration::from_millis(100));
+                                        self.spinner_idx = self.spinner_idx.wrapping_add(1);
+                                    }
+                                    // retrieve handler and result
+                                    match reg_handle.await {
+                                        Ok((handler, success)) => {
+                                            self.handler = Some(handler);
+                                            if success {
+                                                self.reg_success = true;
+                                                self.phase = Phase::RegisterSuccess;
+                                            } else {
+                                                if let Ok(mut logs) = LOG_BUFFER.lock() {
+                                                    logs.push("Registration failed".to_string());
+                                                }
+                                                self.phase = Phase::Register;
+                                            }
                                         }
-                                        WelcomeMode::Login => {
-                                            info!("Logging in {}", user);
-                                            tokio::spawn(async move {
-                                                let success = handler.login_user(&user).await.unwrap_or(false);
-                                                HandleResult::Welcome(handler, mode as usize, user, success)
-                                            })
+                                        Err(e) => {
+                                            if let Ok(mut logs) = LOG_BUFFER.lock() {
+                                                logs.push(format!(
+                                                    "Registration task failed: {:?}",
+                                                    e
+                                                ));
+                                            }
+                                            self.phase = Phase::Register;
                                         }
-                                    };
-                                    self.search_handle = Some(h);
-                                } else if let Ok(mut logs) = LOG_BUFFER.lock() {
-                                    logs.push("Error: not connected to mixnet".into());
+                                    }
                                 }
                             }
-                            KeyCode::Char('q') if self.welcome_mode.is_none() && !self.welcome_loading => self.quit(),
+                            KeyCode::Esc => self.phase = Phase::Welcome,
+                            _ => {}
+                        },
+                        Phase::RegisterSuccess => match key.code {
+                            KeyCode::Char('l') | KeyCode::Char('L') => {
+                                self.phase = Phase::Login;
+                                self.input_buffer.clear();
+                            }
+                            KeyCode::Esc => self.phase = Phase::Welcome,
+                            _ => {}
+                        },
+                        Phase::Login => match key.code {
+                            KeyCode::Char(c) => self.input_buffer.push(c),
+                            KeyCode::Backspace => {
+                                self.input_buffer.pop();
+                            }
+                            KeyCode::Enter => {
+                                if let Some(mut handler) = self.handler.take() {
+                                    let user = self.input_buffer.clone();
+                                    let user_task = user.clone();
+                                    if let Ok(mut logs) = LOG_BUFFER.lock() {
+                                        logs.clear();
+                                    }
+                                    info!("Logging in user: {}", user);
+                                    let login_handle = tokio::spawn(async move {
+                                        let success =
+                                            handler.login_user(&user_task).await.unwrap_or(false);
+                                        (handler, success)
+                                    });
+                                    self.phase = Phase::LoggingIn;
+                                    while !login_handle.is_finished() {
+                                        terminal.draw(|f| self.draw(f))?;
+                                        std::thread::sleep(Duration::from_millis(100));
+                                        self.spinner_idx = self.spinner_idx.wrapping_add(1);
+                                    }
+                                    match login_handle.await {
+                                        Ok((handler, success)) => {
+                                            self.handler = Some(handler);
+                                            if success {
+                                                self.logged_in_user = Some(User {
+                                                    id: user.clone(),
+                                                    username: user.clone(),
+                                                    display_name: user.clone(),
+                                                    online: true,
+                                                });
+                                                // clear so the chat input box starts empty
+                                                self.input_buffer.clear();
+                                                self.phase = Phase::Chat;
+                                            } else {
+                                                if let Ok(mut logs) = LOG_BUFFER.lock() {
+                                                    logs.push("Login failed".to_string());
+                                                }
+                                                self.phase = Phase::Login;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            if let Ok(mut logs) = LOG_BUFFER.lock() {
+                                                logs.push(format!("Login task failed: {:?}", e));
+                                            }
+                                            self.phase = Phase::Login;
+                                        }
+                                    }
+                                }
+                            }
+                            KeyCode::Esc => self.phase = Phase::Welcome,
                             _ => {}
                         },
                         Phase::Chat => {
@@ -466,12 +507,15 @@ impl App {
                                 }
 
                                 // --- START SEARCH (only when no result & not loading) ---
-                                KeyCode::Enter if !self.search_loading && self.search_result.is_none() => {
+                                KeyCode::Enter
+                                    if !self.search_loading && self.search_result.is_none() =>
+                                {
+                                    // start the query, taking handler
                                     if let Some(mut handler) = self.handler.take() {
                                         let q = self.search_buffer.clone();
                                         let h = tokio::spawn(async move {
                                             let res = handler.query_user(&q).await;
-                                            HandleResult::Search(handler, res)
+                                            (handler, res)
                                         });
                                         self.search_handle = Some(h);
                                         self.search_loading = true;
@@ -513,11 +557,22 @@ impl App {
         let content_area: Rect = chunks[1];
         use Phase::*;
         match self.phase {
-            Connect    => self.draw_connect(frame, content_area),
+            Connect => self.draw_connect(frame, content_area),
             Connecting => self.draw_connecting(frame, content_area),
-            Welcome    => self.draw_welcome(frame, content_area),
-            Chat       => crate::ui::render_ui(self, frame, content_area),
-            Search     => self.draw_search(frame, content_area),
+            Registering => {
+                let username = &self.input_buffer;
+                self.draw_registration_status(frame, content_area, username);
+            },
+            Welcome => self.draw_welcome(frame, content_area),
+            Register => self.draw_register(frame, content_area),
+            RegisterSuccess => self.draw_register_success(frame, content_area),
+            LoggingIn => {
+                let username = &self.input_buffer;
+                self.draw_login_status(frame, content_area, username);
+            },
+            Login => self.draw_login(frame, content_area),
+            Chat => crate::ui::render_ui(self, frame, content_area),
+            Search => self.draw_search(frame, content_area),
         }
     }
 
@@ -576,17 +631,45 @@ impl App {
         );
     }
 
+    // Registration and login animated status screens
+    fn draw_registration_status(&self, frame: &mut Frame, area: Rect, username: &str) {
+        use crate::ui::widgets::splash;
+        let label = format!("Registering {}", username);
+        splash::render_splash(
+            frame,
+            area,
+            &self.splash_pages[self.splash_idx],
+            20,
+            false,
+            true,
+            self.spinner_idx,
+            &label,
+        );
+    }
+
+    fn draw_login_status(&self, frame: &mut Frame, area: Rect, username: &str) {
+        use crate::ui::widgets::splash;
+        let label = format!("Logging in as {}", username);
+        splash::render_splash(
+            frame,
+            area,
+            &self.splash_pages[self.splash_idx],
+            20,
+            false,
+            true,
+            self.spinner_idx,
+            &label,
+        );
+    }
 
     // Bouncing-ball logic moved to ui/widgets/splash.rs
     fn draw_welcome(&self, frame: &mut Frame, area: Rect) {
-        use crate::ui::widgets::splash;
         use ratatui::{
             layout::{Alignment, Constraint, Direction, Layout},
             widgets::{Block, Borders, Paragraph},
             style::{Style, Color},
         };
 
-        // full welcome box with green border
         let block = Block::default()
             .title("Welcome")
             .borders(Borders::ALL)
@@ -595,99 +678,80 @@ impl App {
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
-        // split 2/3 splash logo, 1/3 controls
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Ratio(2,3), Constraint::Ratio(1,3)].as_ref())
+            .constraints(
+                [Constraint::Percentage(40), Constraint::Percentage(20), Constraint::Percentage(40)]
+                    .as_ref(),
+            )
             .split(inner);
 
-        // always show static bright splash in upper 2/3
-        splash::render_splash(
-            frame, chunks[0],
-            &self.splash_pages[self.splash_idx],
-            20,     // full brightness
-            false,  // no dynamic glow
-            false,  // no spinner on the logo
-            self.spinner_idx,
-            "",
-        );
-
-        // lower area: either options, input, or loader
-        if let Some(mode) = self.welcome_mode {
-            if self.welcome_loading {
-                // show only spinner + label (no duplicated logo)
-                use ratatui::{
-                    layout::{Constraint, Direction, Layout},
-                    widgets::Paragraph,
-                    style::{Style, Color},
-                    layout::Alignment,
-                };
-                // split the lower third into spinner row and label row
-                let parts = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(1),
-                        Constraint::Length(1),
-                        Constraint::Min(0)
-                    ].as_ref())
-                    .split(chunks[1]);
-                // bouncing ball spinner (fixed width for visible bounce)
-                let spin = splash::bouncing_ball(self.spinner_idx, 12);
-                let p_spin = Paragraph::new(spin)
-                    .style(Style::default().fg(Color::Rgb(0,255,0)))
-                    .alignment(Alignment::Center);
-                frame.render_widget(p_spin, parts[0]);
-                // label beneath
-                let uname = self.welcome_user.as_deref().unwrap_or("");
-                let label = match mode {
-                    WelcomeMode::Register => format!("Registering {}", uname),
-                    WelcomeMode::Login    => format!("Logging in as {}", uname),
-                };
-                let p_label = Paragraph::new(label)
-                    .style(Style::default().fg(Color::Rgb(0,255,0)))
-                    .alignment(Alignment::Center);
-                frame.render_widget(p_label, parts[1]);
-            } else {
-                // one-line input box centered at half the width
-                use ratatui::{
-                    layout::{Constraint, Direction, Layout},
-                    widgets::Paragraph,
-                    layout::Alignment,
-                };
-                // vertical carve
-                let input_vert = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(3),
-                        Constraint::Min(0)
-                    ].as_ref())
-                    .split(chunks[1])[0];
-                // horizontal carve into 25/50/25% to center half-width
-                let input_horiz = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([
-                        Constraint::Percentage(25),
-                        Constraint::Percentage(50),
-                        Constraint::Percentage(25)
-                    ].as_ref())
-                    .split(input_vert)[1];
-                let title = match mode {
-                    WelcomeMode::Register => "Register: enter username and press Enter",
-                    WelcomeMode::Login    => "Login: enter username and press Enter",
-                };
-                let p = Paragraph::new(self.input_buffer.as_str())
-                    .block(Block::default().borders(Borders::ALL).title(title))
-                    .alignment(Alignment::Left);
-                frame.render_widget(p, input_horiz);
-            }
-        } else {
-            // initial options
-            let opts = "[L] Login    [R] Register    [Q] Quit";
-            let p = Paragraph::new(opts)
-                .style(Style::default().fg(Color::Rgb(0, 255, 0)))
-                .alignment(Alignment::Center);
-            frame.render_widget(p, chunks[1]);
-        }
+        let opts = "[L] Login    [R] Register    [Q] Quit";
+        let p = Paragraph::new(opts)
+            .style(Style::default().fg(Color::Rgb(0, 255, 0)))
+            .alignment(Alignment::Center);
+        frame.render_widget(p, chunks[1]);
+    }
+    fn draw_register(&self, frame: &mut Frame, area: Rect) {
+        use ratatui::{
+            layout::{Alignment, Constraint, Direction, Layout},
+            widgets::{Block, Borders, Paragraph},
+        };
+        let title = "Register: Enter username and press Enter";
+        let block = Block::default().title(title).borders(Borders::ALL);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(
+                [
+                    Constraint::Percentage(50),
+                    Constraint::Length(3),
+                    Constraint::Percentage(47),
+                ]
+                .as_ref(),
+            )
+            .split(inner);
+        let input = Paragraph::new(self.input_buffer.as_str())
+            .block(Block::default().borders(Borders::ALL).title("Username"))
+            .alignment(Alignment::Left);
+        frame.render_widget(input, chunks[1]);
+    }
+    fn draw_register_success(&self, frame: &mut Frame, area: Rect) {
+        use ratatui::{
+            layout::Alignment,
+            widgets::{Block, Borders, Paragraph},
+        };
+        let text = "Registration successful! Press L to login.";
+        let p = Paragraph::new(text)
+            .block(Block::default().borders(Borders::NONE))
+            .alignment(Alignment::Center);
+        frame.render_widget(p, area);
+    }
+    fn draw_login(&self, frame: &mut Frame, area: Rect) {
+        use ratatui::{
+            layout::{Alignment, Constraint, Direction, Layout},
+            widgets::{Block, Borders, Paragraph},
+        };
+        let title = "Login: Enter username and press Enter";
+        let block = Block::default().title(title).borders(Borders::ALL);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(
+                [
+                    Constraint::Percentage(50),
+                    Constraint::Length(3),
+                    Constraint::Percentage(47),
+                ]
+                .as_ref(),
+            )
+            .split(inner);
+        let input = Paragraph::new(self.input_buffer.as_str())
+            .block(Block::default().borders(Borders::ALL).title("Username"))
+            .alignment(Alignment::Left);
+        frame.render_widget(input, chunks[1]);
     }
     fn draw_search(&self, frame: &mut Frame, area: Rect) {
         use ratatui::{

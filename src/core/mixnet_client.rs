@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 use crate::core::{crypto::Crypto, db::Db, messages::MixnetEnvelope};
 use anyhow::{Context, Result, anyhow};
+use log::info;
 use chrono::Utc;
 use nym_sdk::mixnet::{
     IncludedSurbs, MixnetClient, MixnetClientBuilder, MixnetClientSender, MixnetMessageSender,
@@ -34,14 +35,19 @@ impl MixnetService {
     pub async fn new(db_path: &str) -> Result<(Self, mpsc::Receiver<Incoming>)> {
         // open database
         let db = Arc::new(Db::open(db_path).await?);
-        db.init_global()?;
+        db.init_global().await?;
         // connect mixnet client
+        info!("Building ephemeral mixnet client...");
         let client = MixnetClientBuilder::new_ephemeral()
             .build()
-            .context("Failed to build mixnet client")?
+            .context("Failed to build mixnet client")?;
+        info!("Connecting to mixnet gateway...");
+        let client = client
             .connect_to_mixnet()
             .await
             .context("Failed to connect to mixnet")?;
+        let address = client.nym_address();
+        info!("Connected to mixnet; address: {}", address);
         let sender = client.split_sender();
         // wrap client in a mutex for shared access
         let client = Arc::new(Mutex::new(Some(client)));
@@ -120,7 +126,7 @@ impl MixnetService {
 
     /// Query for a user's public key via the server
     pub async fn query_user(&self, username: &str) -> Result<Option<(String, String)>> {
-        // for now, lookup in local DB
+        // lookup in local DB
         Ok(self.db.get_user(username).await?)
     }
 

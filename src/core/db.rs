@@ -1,114 +1,145 @@
-//! In-memory stub persistence for users, contacts, and messages
-//! SQLite-backed persistence for users, contacts, and messages
-#![allow(dead_code)]
+//! SQLite persistence using the schema from dbUtils.py
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use sqlx::{Row, SqlitePool};
-use std::path::Path;
+use sqlx::{Row, SqlitePool, sqlite::SqlitePoolOptions};
+use std::{fs, path::Path};
 
-/// Simple in-memory database stub
-/// SQLite persistence
-#[derive(Clone)]
+/// SQLite-backed database.
 pub struct Db {
     pool: SqlitePool,
 }
 
 impl Db {
-    /// Open or create the sqlite database at `path` (e.g. "/data/app.db")
-    pub async fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let db_url = format!("sqlite://{}", path.as_ref().display());
-        let pool = SqlitePool::connect(&db_url).await?;
-        // Enable WAL and foreign keys, create tables
-        sqlx::query(r#"
-            PRAGMA journal_mode = WAL;
-            PRAGMA foreign_keys = ON;
-
-            CREATE TABLE IF NOT EXISTS users (
-              username   TEXT PRIMARY KEY,
-              public_key TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS contacts (
-              owner      TEXT NOT NULL,
-              contact    TEXT NOT NULL,
-              public_key TEXT NOT NULL,
-              PRIMARY KEY(owner, contact),
-              FOREIGN KEY(owner) REFERENCES users(username)
-            );
-            CREATE TABLE IF NOT EXISTS messages (
-              owner   TEXT NOT NULL,
-              contact TEXT NOT NULL,
-              sent    INTEGER NOT NULL,
-              text    TEXT NOT NULL,
-              ts      TEXT NOT NULL
-            );
-        "#)
-        .execute(&pool)
-        .await?;
+    /// Open or create a database at the given path.
+    pub async fn open(path: &str) -> Result<Self> {
+        // ensure parent directories exist so SQLite can create/open the file
+        if let Some(dir) = Path::new(path).parent() {
+            fs::create_dir_all(dir)?;
+        }
+        let url = format!("sqlite://{}?mode=rwc", path);
+        let pool = SqlitePoolOptions::new().max_connections(5).connect(&url).await?;
         Ok(Db { pool })
     }
 
-    /// Initialize global tables (no-op)
-    /// No additional init needed
-    pub fn init_global(&self) -> Result<()> {
-        Ok(())
-    }
-
-    /// Initialize user-specific tables (no-op)
-    /// No per-user schema
-    pub fn init_user(&self, _username: &str) -> Result<()> {
-        Ok(())
-    }
-
-    /// Register a new user with public key
-    /// Insert or update a user's public key
-    pub async fn register_user(&self, username: &str, public_key: &str) -> Result<()> {
-        sqlx::query("INSERT OR REPLACE INTO users (username, public_key) VALUES (?, ?)")
-            .bind(username)
-            .bind(public_key)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    /// Add a contact (no-op)
-    /// Add or update a contact
-    pub async fn add_contact(&self, me: &str, user: &str, public_key: &str) -> Result<()> {
-        sqlx::query("INSERT OR REPLACE INTO contacts (owner, contact, public_key) VALUES (?, ?, ?)")
-            .bind(me)
-            .bind(user)
-            .bind(public_key)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    /// Get a contact's public key (stub returns None)
-    /// Lookup a contact
-    pub async fn get_contact(&self, me: &str, user: &str) -> Result<Option<(String, String)>> {
-        let row = sqlx::query(
-            "SELECT contact, public_key FROM contacts WHERE owner = ? AND contact = ?",
+    /// Create global tables (users).
+    pub async fn init_global(&self) -> Result<()> {
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS users (
+                username TEXT PRIMARY KEY,
+                public_key TEXT NOT NULL
+            )
+            "#,
         )
-        .bind(me)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Create per-user tables (contacts and messages).
+    pub async fn init_user(&self, username: &str) -> Result<()> {
+        let contacts_table = format!("contacts_{}", username);
+        let messages_table = format!("messages_{}", username);
+        sqlx::query(&format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {contacts_table} (
+                username TEXT PRIMARY KEY,
+                public_key TEXT NOT NULL
+            )
+            "#,
+            contacts_table = contacts_table,
+        ))
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(&format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {messages_table} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                type TEXT CHECK(type IN ('to','from')) NOT NULL,
+                message TEXT NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            "#,
+            messages_table = messages_table,
+        ))
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Register a new user and create their tables.
+    pub async fn register_user(&self, username: &str, public_key: &str) -> Result<()> {
+        sqlx::query(
+            r#"INSERT OR REPLACE INTO users (username, public_key) VALUES (?, ?)"#,
+        )
+        .bind(username)
+        .bind(public_key)
+        .execute(&self.pool)
+        .await?;
+        self.init_user(username).await?;
+        Ok(())
+    }
+
+    /// Add or update a contact for the given user.
+    pub async fn add_contact(
+        &self,
+        me: &str,
+        user: &str,
+        public_key: &str,
+    ) -> Result<()> {
+        let table = format!("contacts_{}", me);
+        sqlx::query(&format!(
+            r#"INSERT OR REPLACE INTO {table} (username, public_key) VALUES (?, ?)"#,
+            table = table
+        ))
+        .bind(user)
+        .bind(public_key)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Get a contact's public key for the given user.
+    pub async fn get_contact(
+        &self,
+        me: &str,
+        user: &str,
+    ) -> Result<Option<(String, String)>> {
+        let table = format!("contacts_{}", me);
+        if let Some(row) = sqlx::query(&format!(
+            r#"SELECT username, public_key FROM {table} WHERE username = ?"#,
+            table = table
+        ))
         .bind(user)
         .fetch_optional(&self.pool)
-        .await?;
-        Ok(row.map(|r| (r.get(0), r.get(1))))
+        .await? {
+            let name: String = row.try_get("username")?;
+            let pk: String = row.try_get("public_key")?;
+            Ok(Some((name, pk)))
+        } else {
+            Ok(None)
+        }
     }
 
-    /// Get a registered user's public key
-    /// Lookup a user
+    /// Get a registered user's public key.
     pub async fn get_user(&self, username: &str) -> Result<Option<(String, String)>> {
         let row = sqlx::query(
-            "SELECT username, public_key FROM users WHERE username = ?",
+            r#"SELECT username, public_key FROM users WHERE username = ?"#,
         )
         .bind(username)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(|r| (r.get(0), r.get(1))))
+        if let Some(r) = row {
+            let name: String = r.try_get("username")?;
+            let pk: String = r.try_get("public_key")?;
+            Ok(Some((name, pk)))
+        } else {
+            Ok(None)
+        }
     }
 
-    /// Save a message (no-op)
-    /// Persist a chat message
+    /// Save a message (to/from) for the given user.
     pub async fn save_message(
         &self,
         me: &str,
@@ -117,53 +148,70 @@ impl Db {
         text: &str,
         ts: DateTime<Utc>,
     ) -> Result<()> {
-        sqlx::query(
-            "INSERT INTO messages (owner, contact, sent, text, ts) VALUES (?, ?, ?, ?, ?)",
-        )
-        .bind(me)
+        let table = format!("messages_{}", me);
+        let msg_type = if sent { "to" } else { "from" };
+        sqlx::query(&format!(
+            r#"
+            INSERT INTO {table} (username, type, message, timestamp)
+            VALUES (?, ?, ?, ?)
+            "#,
+            table = table
+        ))
         .bind(contact)
-        .bind(sent as i32)
+        .bind(msg_type)
         .bind(text)
-        .bind(ts.to_rfc3339())
+        .bind(ts)
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
-    /// Load contacts (stub empty)
-    /// Load all contacts for a user
+    /// Load all contacts for the given user.
     pub async fn load_contacts(&self, me: &str) -> Result<Vec<(String, String)>> {
-        let rows = sqlx::query(
-            "SELECT contact, public_key FROM contacts WHERE owner = ?",
-        )
-        .bind(me)
+        let table = format!("contacts_{}", me);
+        let rows = sqlx::query(&format!(
+            r#"SELECT username, public_key FROM {table}"#,
+            table = table
+        ))
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(|r| (r.get(0), r.get(1))).collect())
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                let name: String = r.try_get("username").unwrap();
+                let pk: String = r.try_get("public_key").unwrap();
+                (name, pk)
+            })
+            .collect())
     }
 
-    /// Load messages (stub empty)
-    /// Load all messages between a user and contact
+    /// Load all messages exchanged with a contact for the given user.
     pub async fn load_messages(
         &self,
         me: &str,
         contact: &str,
     ) -> Result<Vec<(bool, String, DateTime<Utc>)>> {
-        let rows = sqlx::query(
-            "SELECT sent, text, ts FROM messages WHERE owner = ? AND contact = ? ORDER BY ts",
-        )
-        .bind(me)
+        let table = format!("messages_{}", me);
+        let rows = sqlx::query(&format!(
+            r#"
+            SELECT type, message, timestamp
+            FROM {table}
+            WHERE username = ?
+            ORDER BY timestamp ASC
+            "#,
+            table = table
+        ))
         .bind(contact)
         .fetch_all(&self.pool)
         .await?;
-        let mut out = Vec::with_capacity(rows.len());
+        let mut msgs = Vec::new();
         for row in rows {
-            let sent: i32 = row.get(0);
-            let text: String = row.get(1);
-            let ts_s: String = row.get(2);
-            let ts = DateTime::parse_from_rfc3339(&ts_s)?.with_timezone(&Utc);
-            out.push((sent != 0, text, ts));
+            let t: String = row.try_get("type")?;
+            let sent = t == "to";
+            let msg: String = row.try_get("message")?;
+            let ts: DateTime<Utc> = row.try_get("timestamp")?;
+            msgs.push((sent, msg, ts));
         }
-        Ok(out)
+        Ok(msgs)
     }
 }
