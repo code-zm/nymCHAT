@@ -106,4 +106,3 @@ pub fn handle_key_event(app: &mut App, key_event: KeyEvent) -> io::Result<()> {
 
     Ok(())
 }
-

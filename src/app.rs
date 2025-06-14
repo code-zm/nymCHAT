@@ -9,10 +9,10 @@ use crossterm::event::{self, Event as CEvent, KeyCode};
 use log::info;
 use ratatui::layout::Rect;
 use ratatui::{DefaultTerminal, Frame};
+use std::collections::HashMap;
+use std::fs;
 use std::io;
 use std::sync::Mutex;
-use std::fs;
-use std::collections::HashMap;
 use std::time::Duration;
 
 /// The different UI phases
@@ -49,18 +49,19 @@ pub struct App {
     search_loading: bool,
     search_spinner_idx: usize,
     // handle for in-flight search query (returns handler and query result)
-    search_handle: Option<tokio::task::JoinHandle<(MessageHandler, anyhow::Result<Option<(String, String)>>)>>,
+    search_handle:
+        Option<tokio::task::JoinHandle<(MessageHandler, anyhow::Result<Option<(String, String)>>)>>,
     /// Log panel scroll offset (0 = bottom/latest)
     log_scroll: usize,
     /// Outgoing messages queued for sending after local echo
     pub(crate) pending_outgoing: Vec<(usize, String)>,
     // Splash animation state
-    splash_pages: Vec<String>,      // pre-rendered Figlet outputs
-    splash_fonts: Vec<&'static str>,// font names for labels
-    splash_idx: usize,              // current font/page index
-    splash_step: usize,             // current glow step (0..max)
-    splash_rising: bool,            // glow direction
-    spinner_idx: usize,             // spinner animation index
+    splash_pages: Vec<String>,       // pre-rendered Figlet outputs
+    splash_fonts: Vec<&'static str>, // font names for labels
+    splash_idx: usize,               // current font/page index
+    splash_step: usize,              // current glow step (0..max)
+    splash_rising: bool,             // glow direction
+    spinner_idx: usize,              // spinner animation index
 }
 
 impl App {
@@ -83,9 +84,26 @@ impl App {
             // Splash animation state
             splash_pages: Vec::new(),
             splash_fonts: vec![
-                "slant", "roman", "red_phoenix", "rammstein", "poison", "maxiwi", "merlin1",
-                "larry 3d", "ghost", "georgi16", "flowerpower", "dos rebel", "dancingfont",
-                "cosmike", "bloody", "blocks", "big money-sw", "banner3-d", "amc aaa01", "3d-ascii",
+                "slant",
+                "roman",
+                "red_phoenix",
+                "rammstein",
+                "poison",
+                "maxiwi",
+                "merlin1",
+                "larry 3d",
+                "ghost",
+                "georgi16",
+                "flowerpower",
+                "dos rebel",
+                "dancingfont",
+                "cosmike",
+                "bloody",
+                "blocks",
+                "big money-sw",
+                "banner3-d",
+                "amc aaa01",
+                "3d-ascii",
             ],
             splash_idx: 0,
             splash_step: 0,
@@ -113,7 +131,10 @@ impl App {
         // Attempt to render with figlet, fallback on missing
         let page = if let Some(filename) = map.get(&key) {
             let path = format!("{}/{}", font_dir, filename);
-            match std::process::Command::new("figlet").args(&["-f", &path, "nymstr"]).output() {
+            match std::process::Command::new("figlet")
+                .args(&["-f", &path, "nymstr"])
+                .output()
+            {
                 Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
                 _ => format!("★ missing font: {} ★", font),
             }
@@ -226,7 +247,8 @@ impl App {
                         // set search result
                         match res {
                             Ok(opt) => {
-                                self.search_result = opt.map(|(u, _)| u).or(Some("<not found>".into()));
+                                self.search_result =
+                                    opt.map(|(u, _)| u).or(Some("<not found>".into()));
                             }
                             Err(_) => {
                                 self.search_result = Some("<not found>".into());
@@ -459,7 +481,11 @@ impl App {
                             match key.code {
                                 // --- MENU COMMANDS (only when a result is present) ---
                                 KeyCode::Char('1')
-                                    if self.search_result.as_deref().map(|r| r != "<not found>").unwrap_or(false) =>
+                                    if self
+                                        .search_result
+                                        .as_deref()
+                                        .map(|r| r != "<not found>")
+                                        .unwrap_or(false) =>
                                 {
                                     // Start chat
                                     if let Some(username) = &self.search_result {
@@ -526,7 +552,7 @@ impl App {
                                 // Ignore all other keys in Search
                                 _ => {}
                             }
-                        },
+                        }
                         _ => {}
                     }
                 }
@@ -562,14 +588,14 @@ impl App {
             Registering => {
                 let username = &self.input_buffer;
                 self.draw_registration_status(frame, content_area, username);
-            },
+            }
             Welcome => self.draw_welcome(frame, content_area),
             Register => self.draw_register(frame, content_area),
             RegisterSuccess => self.draw_register_success(frame, content_area),
             LoggingIn => {
                 let username = &self.input_buffer;
                 self.draw_login_status(frame, content_area, username);
-            },
+            }
             Login => self.draw_login(frame, content_area),
             Chat => crate::ui::render_ui(self, frame, content_area),
             Search => self.draw_search(frame, content_area),
@@ -624,8 +650,8 @@ impl App {
             frame.area(),
             splash_text,
             self.splash_step,
-            true,          // still glow dynamically
-            show_spinner,  // only bounce once Connecting
+            true,         // still glow dynamically
+            show_spinner, // only bounce once Connecting
             self.spinner_idx,
             label,
         );
@@ -666,8 +692,8 @@ impl App {
     fn draw_welcome(&self, frame: &mut Frame, area: Rect) {
         use ratatui::{
             layout::{Alignment, Constraint, Direction, Layout},
+            style::{Color, Style},
             widgets::{Block, Borders, Paragraph},
-            style::{Style, Color},
         };
 
         let block = Block::default()
@@ -681,8 +707,12 @@ impl App {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints(
-                [Constraint::Percentage(40), Constraint::Percentage(20), Constraint::Percentage(40)]
-                    .as_ref(),
+                [
+                    Constraint::Percentage(40),
+                    Constraint::Percentage(20),
+                    Constraint::Percentage(40),
+                ]
+                .as_ref(),
             )
             .split(inner);
 
@@ -756,7 +786,7 @@ impl App {
     fn draw_search(&self, frame: &mut Frame, area: Rect) {
         use ratatui::{
             layout::{Alignment, Constraint, Direction, Layout},
-            style::{Style, Color},
+            style::{Color, Style},
             widgets::{Block, Borders, Paragraph},
         };
         let title = "Search User: type username and press Enter, Esc to cancel";
@@ -840,5 +870,4 @@ impl App {
         let paragraph = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
         frame.render_widget(paragraph, inner);
     }
-
 }

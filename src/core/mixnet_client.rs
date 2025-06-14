@@ -2,8 +2,8 @@
 #![allow(dead_code)]
 use crate::core::{crypto::Crypto, db::Db, messages::MixnetEnvelope};
 use anyhow::{Context, Result, anyhow};
-use log::info;
 use chrono::Utc;
+use log::info;
 use nym_sdk::mixnet::{
     IncludedSurbs, MixnetClient, MixnetClientBuilder, MixnetClientSender, MixnetMessageSender,
     Recipient,

@@ -134,7 +134,7 @@ impl MessageHandler {
             // Handle final login response
             else if env.action == "challengeResponse" && env.context.as_deref() == Some("login") {
                 if let Some(result) = env.content {
-                if result == "success" {
+                    if result == "success" {
                         self.db.init_user(username).await?;
                         self.current_user = Some(username.to_string());
                         return Ok(true);
@@ -239,14 +239,10 @@ impl MessageHandler {
                             info!("Incoming from {}: {}", sender, message);
                             // Persist incoming
                             if let Some(user) = &self.current_user {
-                                let _ = self.db.save_message(
-                                    user,
-                                    sender,
-                                    false,
-                                    &message,
-                                    incoming.ts,
-                                )
-                                .await;
+                                let _ = self
+                                    .db
+                                    .save_message(user, sender, false, &message, incoming.ts)
+                                    .await;
                             }
                             msgs.push((sender.to_string(), message));
                         }

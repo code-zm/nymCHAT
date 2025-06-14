@@ -17,7 +17,10 @@ impl Db {
             fs::create_dir_all(dir)?;
         }
         let url = format!("sqlite://{}?mode=rwc", path);
-        let pool = SqlitePoolOptions::new().max_connections(5).connect(&url).await?;
+        let pool = SqlitePoolOptions::new()
+            .max_connections(5)
+            .connect(&url)
+            .await?;
         Ok(Db { pool })
     }
 
@@ -70,24 +73,17 @@ impl Db {
 
     /// Register a new user and create their tables.
     pub async fn register_user(&self, username: &str, public_key: &str) -> Result<()> {
-        sqlx::query(
-            r#"INSERT OR REPLACE INTO users (username, public_key) VALUES (?, ?)"#,
-        )
-        .bind(username)
-        .bind(public_key)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query(r#"INSERT OR REPLACE INTO users (username, public_key) VALUES (?, ?)"#)
+            .bind(username)
+            .bind(public_key)
+            .execute(&self.pool)
+            .await?;
         self.init_user(username).await?;
         Ok(())
     }
 
     /// Add or update a contact for the given user.
-    pub async fn add_contact(
-        &self,
-        me: &str,
-        user: &str,
-        public_key: &str,
-    ) -> Result<()> {
+    pub async fn add_contact(&self, me: &str, user: &str, public_key: &str) -> Result<()> {
         let table = format!("contacts_{}", me);
         sqlx::query(&format!(
             r#"INSERT OR REPLACE INTO {table} (username, public_key) VALUES (?, ?)"#,
@@ -101,11 +97,7 @@ impl Db {
     }
 
     /// Get a contact's public key for the given user.
-    pub async fn get_contact(
-        &self,
-        me: &str,
-        user: &str,
-    ) -> Result<Option<(String, String)>> {
+    pub async fn get_contact(&self, me: &str, user: &str) -> Result<Option<(String, String)>> {
         let table = format!("contacts_{}", me);
         if let Some(row) = sqlx::query(&format!(
             r#"SELECT username, public_key FROM {table} WHERE username = ?"#,
@@ -113,7 +105,8 @@ impl Db {
         ))
         .bind(user)
         .fetch_optional(&self.pool)
-        .await? {
+        .await?
+        {
             let name: String = row.try_get("username")?;
             let pk: String = row.try_get("public_key")?;
             Ok(Some((name, pk)))
@@ -124,12 +117,10 @@ impl Db {
 
     /// Get a registered user's public key.
     pub async fn get_user(&self, username: &str) -> Result<Option<(String, String)>> {
-        let row = sqlx::query(
-            r#"SELECT username, public_key FROM users WHERE username = ?"#,
-        )
-        .bind(username)
-        .fetch_optional(&self.pool)
-        .await?;
+        let row = sqlx::query(r#"SELECT username, public_key FROM users WHERE username = ?"#)
+            .bind(username)
+            .fetch_optional(&self.pool)
+            .await?;
         if let Some(r) = row {
             let name: String = r.try_get("username")?;
             let pk: String = r.try_get("public_key")?;
@@ -213,5 +204,78 @@ impl Db {
             msgs.push((sent, msg, ts));
         }
         Ok(msgs)
+    }
+
+    /// Delete a contact for the specified user.
+    pub async fn delete_contact(&self, me: &str, user: &str) -> Result<()> {
+        let table = format!("contacts_{}", me);
+        sqlx::query(&format!(
+            "DELETE FROM {table} WHERE username = ?",
+            table = table
+        ))
+        .bind(user)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Delete all messages for the specified user.
+    pub async fn delete_all_messages(&self, me: &str) -> Result<()> {
+        let table = format!("messages_{}", me);
+        sqlx::query(&format!("DELETE FROM {table}", table = table))
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    #[tokio::test]
+    async fn test_register_and_get_user() -> Result<()> {
+        let db = Db::open(":memory:").await?;
+        db.init_global().await?;
+        db.register_user("alice", "pk_alice").await?;
+        let user = db.get_user("alice").await?;
+        assert_eq!(user, Some(("alice".to_string(), "pk_alice".to_string())));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_contact_and_messages_flow() -> Result<()> {
+        let db = Db::open(":memory:").await?;
+        db.init_global().await?;
+        db.init_user("bob").await?;
+        db.add_contact("bob", "alice", "pk1").await?;
+        let ct = db.get_contact("bob", "alice").await?;
+        assert_eq!(ct, Some(("alice".to_string(), "pk1".to_string())));
+
+        let ts = Utc::now();
+        db.save_message("bob", "alice", true, "hello", ts).await?;
+        let msgs = db.load_messages("bob", "alice").await?;
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].0, true);
+        assert_eq!(msgs[0].1, "hello".to_string());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_delete_contact_and_messages() -> Result<()> {
+        let db = Db::open(":memory:").await?;
+        db.init_global().await?;
+        db.init_user("bob").await?;
+        db.add_contact("bob", "alice", "pk1").await?;
+        db.delete_contact("bob", "alice").await?;
+        assert!(db.get_contact("bob", "alice").await?.is_none());
+
+        let ts = Utc::now();
+        db.save_message("bob", "alice", false, "hey", ts).await?;
+        db.delete_all_messages("bob").await?;
+        let msgs = db.load_messages("bob", "alice").await?;
+        assert!(msgs.is_empty());
+        Ok(())
     }
 }

@@ -1,9 +1,9 @@
 use ratatui::{
-    layout::{Layout, Constraint, Direction, Alignment, Rect},
-    style::{Style, Color},
-    widgets::Paragraph,
-    text::{Text, Line},
     Frame,
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Style},
+    text::{Line, Text},
+    widgets::Paragraph,
 };
 
 /// Renders the splash screen with optional dynamic glow and spinner
@@ -62,7 +62,11 @@ pub fn render_splash(
 /// Bouncing-ball animation: solid bullet moves within a bracket of given width
 pub fn bouncing_ball(idx: usize, width: usize) -> String {
     let cycle = idx % (2 * (width - 1));
-    let pos = if cycle < width { cycle } else { 2 * (width - 1) - cycle };
+    let pos = if cycle < width {
+        cycle
+    } else {
+        2 * (width - 1) - cycle
+    };
     let mut s = String::from("[");
     for i in 0..width {
         s.push(if i == pos { '●' } else { ' ' });

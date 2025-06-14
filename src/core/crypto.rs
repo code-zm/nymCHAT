@@ -2,9 +2,11 @@
 #![allow(dead_code)]
 
 use anyhow::Result;
+use anyhow::anyhow;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use hex;
+use hkdf::Hkdf;
 use openssl::derive::Deriver;
 use openssl::{
     bn::BigNumContext,
@@ -12,11 +14,11 @@ use openssl::{
     nid::Nid,
     pkey::PKey,
     rand::rand_bytes,
-    sha::sha256,
     sign::{Signer, Verifier},
     symm::{Cipher, Crypter, Mode},
 };
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 
 /// Encrypted payload format for ECDH + AES-GCM
 #[derive(Serialize, Deserialize, Debug)]
@@ -26,6 +28,43 @@ pub struct Encrypted {
     pub iv: String,
     pub ciphertext: String,
     pub tag: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use openssl::rand::rand_bytes;
+
+    #[test]
+    fn test_sign_verify() {
+        let (sk_pem, pk_pem) = Crypto::generate_keypair().expect("keypair");
+        let msg = b"hello nym";
+        let sig = Crypto::sign(&sk_pem, msg).expect("sign");
+        assert!(Crypto::verify(&pk_pem, msg, &sig));
+        // Negative case: signature over different message fails
+        let bad_sig = Crypto::sign(&sk_pem, b"other msg").expect("sign2");
+        assert!(!Crypto::verify(&pk_pem, msg, &bad_sig));
+    }
+
+    #[test]
+    fn test_kdf_hkdf_sha256() {
+        let mut salt = [0u8; 16];
+        rand_bytes(&mut salt).unwrap();
+        let secret = b"some shared secret";
+        let hk = Hkdf::<Sha256>::new(Some(&salt), secret);
+        let mut okm = [0u8; 32];
+        hk.expand(b"test info", &mut okm).expect("hkdf expand");
+        assert_eq!(okm.len(), 32);
+    }
+
+    #[test]
+    fn test_encrypt_decrypt() {
+        let (sk_pem, pk_pem) = Crypto::generate_keypair().expect("gen keys");
+        let plaintext = b"top secret data";
+        let enc = Crypto::encrypt(&pk_pem, plaintext).expect("encrypt");
+        let dec = Crypto::decrypt(&sk_pem, &enc).expect("decrypt");
+        assert_eq!(&dec, plaintext);
+    }
 }
 
 /// Crypto utilities: ECDSA, ECDH, AES-GCM via OpenSSL
@@ -87,10 +126,14 @@ impl Crypto {
         deriver.set_peer(&recipient_pkey)?;
         let shared_secret = deriver.derive_to_vec()?;
 
-        // Salt + simple HKDF-like derivation via SHA256(salt || shared_secret)
+        // Salt + HKDF-SHA256 key derivation
         let mut salt = [0u8; 16];
         rand_bytes(&mut salt)?;
-        let derived_key = sha256(&[&salt[..], &shared_secret[..]].concat());
+        let hk = Hkdf::<Sha256>::new(Some(&salt), &shared_secret);
+        let mut okm = [0u8; 32];
+        hk.expand(b"ECDH session key", &mut okm)
+            .map_err(|e| anyhow!("HKDF expand failed: {:?}", e))?;
+        let derived_key = okm;
 
         // AES-GCM encryption
         let mut iv = [0u8; 12];
@@ -135,7 +178,11 @@ impl Crypto {
         deriver.set_peer(&eph_pkey)?;
         let shared_secret = deriver.derive_to_vec()?;
         let salt = hex::decode(&enc.salt)?;
-        let derived_key = sha256(&[&salt[..], &shared_secret[..]].concat());
+        let hk = Hkdf::<Sha256>::new(Some(&salt), &shared_secret);
+        let mut okm = [0u8; 32];
+        hk.expand(b"ECDH session key", &mut okm)
+            .map_err(|e| anyhow!("HKDF expand failed: {:?}", e))?;
+        let derived_key = okm;
 
         let iv = hex::decode(&enc.iv)?;
         let ciphertext = hex::decode(&enc.ciphertext)?;

@@ -8,8 +8,8 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
 };
-use serde_json::Value;
 use serde::de::Error;
+use serde_json::Value;
 
 pub fn render_chat(
     app: &App,
