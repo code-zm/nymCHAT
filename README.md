@@ -1,4 +1,8 @@
-# nymCHAT
+# nymCHAT [ARCHIVED]
+
+**This repository has been archived. All further development is now taking place at [github.com/nymstr](https://github.com/nymstr)**
+
+---
 
 A security focused messaging app powered by the Nym Mixnet. The repo is divided into two parts: the **Chat Client** (in the _client_ folder) and the **Discovery Node** (in the server folder). Together they enable pseudonymous, end-to-end encrypted messaging.
 
